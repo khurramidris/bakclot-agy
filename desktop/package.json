@@ -1,6 +1,6 @@
 {
   "name": "backlot-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Backlot for your desktop: the whole studio in one app, with its own database and your own API keys",
   "main": "main.cjs",
   "private": true,
@@ -12,6 +12,7 @@
     "dev": "node scripts/prepare.mjs --quick && electron .",
     "dist": "node scripts/prepare.mjs && electron-builder",
     "test": "node --test test/*.test.cjs",
+    "test:database": "node scripts/test-database.cjs",
     "smoke": "node scripts/smoke.cjs"
   },
   "dependencies": {
@@ -24,3 +25,4 @@
     "electron-builder": "^26.15.3"
   }
 }
+

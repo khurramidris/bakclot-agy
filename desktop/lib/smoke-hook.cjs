@@ -47,5 +47,6 @@ exports.run = async ({ app, settings, boot, stack, getMain, logFn }) => {
     if (!video.ok || bytes < 10_000) return fail('the finished film is missing or empty');
     console.log('SMOKE OK');
     app.quit();
-  } catch (e) { logFn('smoke', e.stack || e.message); fail(e.message); }
+  } catch (e) { logFn('smoke', e?.stack || String(e)); fail(e?.message || String(e)); }
 };
+

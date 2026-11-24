@@ -20,5 +20,12 @@ if (process.platform === 'linux') {
 const r = spawnSync(cmd, args, { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'], timeout: 6 * 60_000, encoding: 'utf8' });
 const out = (r.stdout || '') + (r.stderr || '');
 for (const line of out.split('\n')) if (line.startsWith('SMOKE')) console.log(line);
+const ok = out.includes('SMOKE OK') && r.status === 0;
+if (!ok) {
+  const logfile = path.join(data, 'logs', 'backlot.log');
+  if (fs.existsSync(logfile)) console.error(fs.readFileSync(logfile, 'utf8').split('\n').slice(-100).join('\n'));
+  if (r.error) console.error(r.error.message);
+}
 fs.rmSync(data, { recursive: true, force: true });
-if (!out.includes('SMOKE OK')) { console.error(out.split('\n').slice(-25).join('\n')); process.exit(1); }
+if (!ok) { console.error(out.split('\n').slice(-25).join('\n')); process.exit(1); }
+

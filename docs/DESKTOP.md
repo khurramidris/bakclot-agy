@@ -108,8 +108,22 @@ npm run prepare:app && npm run smoke   # starts the real app and makes a whole f
 - `desktop/lib/settings.cjs`: your settings, and the environment the engine gets. Only a few system variables are passed on, so nothing from your shell leaks in.
 - FFmpeg comes from `ffmpeg-static` and `@ffprobe-installer/ffprobe`. That FFmpeg has no `drawtext` filter, so with the bundled fonts folder set the engine draws placeholder text and slates through libass instead (`engine/src/media/ffmpeg.ts`).
 
+## Windows startup encoding fix (0.1.1)
+
+Version 0.1.0 could inherit Windows' WIN1252 database encoding and fail before demo mode opened
+(`22P05`, "UTF8 has no equivalent in WIN1252"). Version 0.1.1 explicitly creates UTF-8 databases.
+Installing it over 0.1.0 automatically recovers an empty database left by that failed first migration;
+the old database is retained under a `backlot_legacy_...` name in the same cluster. Settings, keys
+and media files are kept. Databases with existing tables or applied migrations are left untouched
+and report that a UTF-8 export/import is needed. Do not delete your data folder to work around this.
+
+`npm run test:database` reproduces the WIN1252 failure with real embedded Postgres, verifies recovery,
+applies the engine migrations, and checks Urdu/emoji persistence. Run it after `prepare:app`, as a
+normal user. Windows installer CI also runs the full demo-to-MP4 smoke check.
+
 ## Not covered yet
 
 - The RunPod worker must match our contract (`gpu-worker/handler.py`); see `docs/LOCAL.md`.
 - Auto-update is not set up: install a newer build over the old one. Your data folder is kept.
 - The Windows and macOS installers and the tunnel download are built to work but have only been tested on Linux.
+

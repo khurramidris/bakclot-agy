@@ -14,11 +14,11 @@ function freePort(preferred) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Poll until `fn` returns truthy or the time is up. */
-async function waitFor(fn, { timeoutMs = 60_000, everyMs = 400, what = 'it' } = {}) {
+async function waitFor(fn, { timeoutMs = 60_000, everyMs = 400, what = 'it', failFast = false } = {}) {
   const t0 = Date.now();
   let last;
   while (Date.now() - t0 < timeoutMs) {
-    try { const r = await fn(); if (r) return r; } catch (e) { last = e; }
+    try { const r = await fn(); if (r) return r; } catch (e) { if (failFast) throw e; last = e; }
     await sleep(everyMs);
   }
   throw new Error(`Timed out waiting for ${what}${last ? `: ${last.message}` : ''}`);
@@ -40,3 +40,4 @@ function logger(file) {
 }
 
 module.exports = { freePort, sleep, waitFor, logger };
+

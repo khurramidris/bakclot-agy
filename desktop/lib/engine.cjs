@@ -16,9 +16,9 @@ async function start({ execPath, engineDir, env, port, log }) {
   const base = `http://127.0.0.1:${port}`;
   await waitFor(async () => {
     if (exited) throw new Error(`the engine stopped (exit ${exited.code ?? exited.sig})`);
-    const r = await fetch(`${base}/health`).catch(() => null);
+    const r = await fetch(`${base}/health`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
     return r && r.ok;
-  }, { timeoutMs: 90_000, what: 'the engine to start' });
+  }, { timeoutMs: 90_000, what: 'the engine to start', failFast: true });
 
   return {
     url: base,
@@ -33,3 +33,4 @@ async function start({ execPath, engineDir, env, port, log }) {
 }
 
 module.exports = { start };
+
