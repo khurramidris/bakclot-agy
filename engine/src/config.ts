@@ -208,6 +208,18 @@ export const config = {
     maxWorkers: num(env.RUNPOD_MAX_WORKERS, 5),
     jobsPerWorker: num(env.RUNPOD_JOBS_PER_WORKER, 2),
     tickSeconds: num(env.RUNPOD_CAPACITY_TICK_SECONDS, 30),
+    graphqlUrl: env.RUNPOD_GRAPHQL_URL || 'https://api.runpod.io/graphql', // account balance, for the ops dashboard
+  },
+
+  // The ops dashboard (src/ops.ts): its own service, so it stays up when the app has trouble and shows you that it does.
+  ops: {
+    port: num(env.OPS_PORT, num(env.PORT, 8790)),
+    // Where it checks that the app answers: ENGINE_URL (e.g. Railway's private address), else the public site.
+    engineUrl: (env.ENGINE_URL || env.PUBLIC_BASE_URL || `http://localhost:${num(env.PORT, 8787)}`).replace(/\/$/, ''),
+    // Monthly spend you allow per provider ("anthropic:300,minimax:200,runpod:400"): the dashboard shows what's left
+    // and how many days it lasts at the current rate.
+    budgets: Object.fromEntries(Object.entries(pairs(env.PROVIDER_BUDGETS_MONTHLY || '')).map(([k, v]) => [k.toLowerCase(), Number(v)] as const)
+      .filter(([, v]) => v > 0)) as Record<string, number>,
   },
 
   // Error alerts (optional): a Sentry project's DSN. Server errors and failed jobs are reported there.

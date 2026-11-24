@@ -7,6 +7,8 @@ import { timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Local development (ALLOW_DEV_TOKENS): the user the web app signs in as. */
+export const DEV_USER = '11111111-2222-3333-4444-555555555555';
 const hsKey = config.auth.supabaseJwtSecret ? new TextEncoder().encode(config.auth.supabaseJwtSecret) : null;
 const jwks = config.auth.supabaseUrl ? createRemoteJWKSet(new URL(`${config.auth.supabaseUrl}/auth/v1/.well-known/jwks.json`)) : null;
 

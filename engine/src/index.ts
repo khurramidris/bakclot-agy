@@ -7,11 +7,13 @@ import { registerJobs, startSystemJobs } from './jobs.js';
 import { startWorker } from './queue.js';
 import { app } from './server.js';
 import { initMonitoring, reportError } from './monitoring.js';
+import { flushTelemetry, startTelemetry } from './telemetry.js';
 
 await initMonitoring();
 if (config.autoMigrate) await migrate();
 registerJobs();
 await startSystemJobs();
+startTelemetry();
 const worker = config.runWorker ? startWorker() : null;
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (i) => console.log(`[api] listening on :${i.port}${config.mock ? ' (MOCK PROVIDERS)' : ''}`));
 // If the database pool ever stops answering while the database is up, leave: the platform starts a fresh process.
@@ -23,5 +25,6 @@ for (const s of ['SIGINT', 'SIGTERM'] as const) process.once(s, async () => {
   setTimeout(() => process.exit(0), 30_000).unref();
   server.close();
   await worker?.stop(20_000);
+  await flushTelemetry();
   process.exit(0);
 });

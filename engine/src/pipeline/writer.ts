@@ -148,7 +148,7 @@ export async function writeStep(projectId: string, ctx: JobCtx): Promise<{ done:
   /** One Claude call of this project, with its cost recorded. */
   const ask = async <T>(call: ClaudeCall<T>, ref: string) => {
     const r = await claudeJSON<T>({ ...call, bulk: long });
-    await recordUsage({ ownerId: p.owner_id, projectId, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), ref });
+    await recordUsage({ ownerId: p.owner_id, projectId, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), model: r.model, ref });
     return r.data;
   };
   const room = { p, brief, st, ask };
@@ -486,7 +486,7 @@ export async function rewriteScene(episodeId: string, k: number, note: string) {
   const brief = p.brief as Brief, long = isLongForm(brief);
   const ask = async <T>(call: ClaudeCall<T>, ref: string) => {
     const r = await claudeJSON<T>({ ...call, bulk: long });
-    await recordUsage({ ownerId: p.owner_id, projectId: p.id, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), ref });
+    await recordUsage({ ownerId: p.owner_id, projectId: p.id, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), model: r.model, ref });
     return r.data;
   };
   const room: Room = { p, brief, st: { bible, outline, scenes: [] }, ask };

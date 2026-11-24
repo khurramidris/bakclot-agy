@@ -37,6 +37,11 @@ function Privacy() {
           <strong>Technical:</strong> server logs with your IP address, browser and request times,
           kept for security and to fix problems.
         </li>
+        <li>
+          <strong>Usage:</strong> which days you used Backlot and how many requests your account
+          made, the steps each of your videos went through, and the outcome of content checks (not
+          what you wrote), so we can keep the service running well and improve it.
+        </li>
       </ul>
 
       <h2>Why we use it</h2>
@@ -112,6 +117,7 @@ function Privacy() {
           Videos and films made through the API, and the files sent to make them, are deleted 7 days
           after they finish (1 day after a failure).
         </li>
+        <li>Usage records are kept while your account exists, and deleted with it.</li>
       </ul>
 
       <h2>Your rights</h2>

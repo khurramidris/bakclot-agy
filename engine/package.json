@@ -4,8 +4,10 @@
   "description": "Backlot engine: prompt \u2192 script \u2192 cast \u2192 shots \u2192 rendered, edited film",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:ops": "tsx watch src/ops.ts",
     "start": "node dist/index.js",
     "worker": "node dist/worker.js",
+    "ops": "node dist/ops.js",
     "build": "tsc -p .",
     "typecheck": "tsc -p . --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
@@ -15,9 +17,11 @@
     "e2e:reliability": "tsx test/reliability.e2e.ts",
     "e2e:scale": "tsx test/scale.e2e.ts",
     "e2e:api": "tsx test/api.e2e.ts",
+    "e2e:ops": "tsx test/ops.e2e.ts",
     "preflight": "tsx src/preflight.ts",
     "eval:story": "tsx scripts/eval-story.ts",
     "local": "tsx watch --env-file=.env.local src/index.ts",
+    "local:ops": "tsx watch --env-file=.env.local src/ops.ts",
     "preflight:local": "tsx --env-file=.env.local src/preflight.ts",
     "eval:story:local": "tsx --env-file=.env.local scripts/eval-story.ts"
   },

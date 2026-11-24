@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { sql, begin, plain, poolAnswers } from './db.js';
 import { storage, verifySignature, mimeOf, isLocalStorage, PUT } from './storage.js';
-import { requireUser } from './auth.js';
+import { requireUser, DEV_USER } from './auth.js';
 import { enqueue, PermanentError } from './queue.js';
 import { createProject } from './pipeline/importer.js';
 import { deleteProject } from './pipeline/projects.js';
@@ -38,11 +38,13 @@ import { api as publicApi } from './api/routes.js';
 import { developers } from './api/manage.js';
 import { limit } from './ratelimit.js';
 import { reportError } from './monitoring.js';
+import { trackRequests, logWebhook } from './telemetry.js';
 
 type Env = { Variables: { uid: string; email: string | null } };
 export const app = new Hono<Env>();
 const here = dirname(fileURLToPath(import.meta.url));
-const DEV_USER = '11111111-2222-3333-4444-555555555555';
+
+app.use('*', trackRequests); // first, so it times everything (the ops dashboard's API traffic and active customers)
 
 /**
  * What the pages this engine serves may load: their own scripts and styles, pictures and video from our storage, and
@@ -173,14 +175,30 @@ app.get('/files/*', async (c) => {
 });
 
 // Lemon Squeezy calls this for subscription and order events. Authenticated by its signature, not a user session.
+// Every delivery is logged for the ops dashboard: a failing one means a payment or plan change didn't reach the app.
 app.post('/webhooks/lemonsqueezy', async (c) => {
+  const t0 = Date.now();
+  const log = (event: string | null, ok: boolean, status: number, error: string | null = null) =>
+    logWebhook({ source: 'lemonsqueezy', event, ok, status, error, ms: Date.now() - t0 });
   const raw = await c.req.text();
   if (!verifyLemonSignature(raw, c.req.header('x-signature') || '', config.lemonsqueezy.webhookSecret)) {
+    await log(null, false, 400, 'bad signature');
     return c.json({ error: { code: 'bad_signature', message: 'Invalid Lemon Squeezy signature.' } }, 400);
   }
   let evt: any;
-  try { evt = JSON.parse(raw); } catch { return c.json({ error: { code: 'bad_request', message: 'Body is not JSON.' } }, 400); }
-  return c.json(await handleLemonEvent(evt));
+  try { evt = JSON.parse(raw); } catch {
+    await log(null, false, 400, 'body is not JSON');
+    return c.json({ error: { code: 'bad_request', message: 'Body is not JSON.' } }, 400);
+  }
+  const name = typeof evt?.meta?.event_name === 'string' ? evt.meta.event_name : null;
+  try {
+    const result = await handleLemonEvent(evt);
+    await log(name, true, 200);
+    return c.json(result);
+  } catch (e: any) {
+    await log(name, false, e.status || 500, String(e.message || e));
+    throw e;
+  }
 });
 
 // The web app reads its sign-in settings at startup, so one build works in every environment.
@@ -838,7 +856,8 @@ const WEB_MIME: Record<string, string> = {
 const webDir = resolve(config.webDir);
 app.get('*', async (c) => {
   const path = decodeURIComponent(c.req.path);
-  if (/^\/(v1|api|files|webhooks|health|console)(\/|$)/.test(path)) return c.json({ error: { code: 'not_found', message: 'not found' } }, 404);
+  // /ops is the ops dashboard's page in the same build: it's served by its own service (ops.ts), never on this site.
+  if (/^\/(v1|api|files|webhooks|health|console|ops)(\/|$)/.test(path)) return c.json({ error: { code: 'not_found', message: 'not found' } }, 404);
   const file = resolve(webDir, '.' + path);
   if (path !== '/' && file.startsWith(webDir + sep) && (await stat(file).then((s) => s.isFile(), () => false))) {
     return new Response(new Uint8Array(await readFile(file)), { headers: {

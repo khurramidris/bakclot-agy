@@ -144,6 +144,12 @@ projects marked `origin = 'api'`. Through the API a film is approved by itself w
   `engine/src/preflight.ts` (Setup check),
   `engine/src/ratelimit.ts` (per-customer limits) and `engine/src/monitoring.ts` (Sentry, optional). Every response
   carries security headers and a content security policy (`server.ts`); what a job cost us is shown to admins only.
+- **Ops dashboard:** a separate, read-only service (`engine/src/ops.ts`, `node dist/ops.js`) with its own address,
+  so it stays up when the app doesn't. One report per page (`engine/src/ops/*`) for the page in `web/src/ops`; admins
+  only. The engine records what those reports need (`engine/src/telemetry.ts`, migration 012): API requests counted
+  in memory and written once a minute by route pattern, one row per customer per active day, a health snapshot
+  every minute (a `system.snapshot` job), every stage a video enters (a database trigger, so no code path misses
+  one), content-check verdicts by customer, and payment webhook deliveries. Never customer content.
 
 ## Invariants worth keeping
 

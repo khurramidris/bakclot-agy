@@ -4,6 +4,7 @@
   "scripts": {
     "setup": "npm --prefix engine ci && npm --prefix web ci",
     "dev:engine": "npm --prefix engine run dev",
+    "dev:ops": "npm --prefix engine run dev:ops",
     "dev:web": "npm --prefix web run dev",
     "build": "npm --prefix web run build && npm --prefix engine run build",
     "test": "npm --prefix engine test && npm --prefix web test",

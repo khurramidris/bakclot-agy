@@ -41,6 +41,8 @@ jobs:
         run: createdb scale && DATABASE_URL=postgres://postgres@localhost:5432/scale npx tsx test/scale.e2e.ts
       - name: Public API (keys, videos, microdramas, webhooks, limits, expiry)
         run: createdb api && DATABASE_URL=postgres://postgres@localhost:5432/api PORT=8805 npx tsx test/api.e2e.ts
+      - name: Ops dashboard (what the engine records, every report, admins only)
+        run: createdb ops && DATABASE_URL=postgres://postgres@localhost:5432/ops PORT=8804 npx tsx test/ops.e2e.ts
 
   web:
     runs-on: ubuntu-latest

@@ -60,6 +60,10 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-viz-1: var(--viz-1);
+  --color-viz-2: var(--viz-2);
+  --color-viz-3: var(--viz-3);
+  --color-viz-other: var(--viz-other);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -127,6 +131,27 @@
   --chart-3: var(--celluloid);
   --chart-4: #6f6b62;
   --chart-5: var(--ivory);
+
+  /*
+   * Charts with several series (the ops dashboard), checked against the card surface with the dataviz palette
+   * validator: blue, orange and aqua stay apart in every pairing, for colour-blind and full-colour readers alike;
+   * "other" is the warm grey. One-series and highlight-one charts use --chart-1 (Studio Orange) and --chart-4 (grey).
+   * The blue steps are the ramp for ordered steps (funnels) and amounts (the retention grid).
+   */
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-other: #6f6b62;
+  --viz-blue-150: #b7d3f6;
+  --viz-blue-200: #9ec5f4;
+  --viz-blue-250: #86b6ef;
+  --viz-blue-300: #6da7ec;
+  --viz-blue-350: #5598e7;
+  --viz-blue-400: #3987e5;
+  --viz-blue-500: #256abf;
+  --viz-blue-550: #1c5cab;
+  --viz-blue-600: #184f95;
+  --viz-blue-650: #104281;
 
   --sidebar: #121212;
   --sidebar-foreground: var(--ivory);

@@ -181,6 +181,25 @@ at most `MEDIA_SLOTS` (3) at a time per process, with `MEDIA_QUEUE` (24) waiting
 **Cleanup** runs hourly: finished jobs after 7 days and failed ones after 30, edits beyond the two newest per episode,
 old content-check verdicts, and the API's expired outputs and logs.
 
+### The ops dashboard (a second service, 10 minutes)
+
+The founder's dashboard runs as its own Railway service from the same image, so it keeps working, and shows you,
+when the app has trouble. It only reads the database, never changes it, and only admins (`ADMIN_USER_IDS`) get in.
+1. In the same Railway project: **New → GitHub Repo → `khurramidris/backlot`**. Railway builds the same image.
+2. That service's **Settings → Deploy → Custom Start Command**: `node dist/ops.js`.
+3. **Variables → Raw Editor**: paste the same variables as the app (open the app's Raw Editor and copy it all).
+   The dashboard computes money with the same settings (plan price, fees, fixed costs), so they must match.
+4. **Settings → Networking**: generate a domain, or add one like `ops.<your-domain>`. Open it and sign in with
+   your Backlot account.
+   - Google sign-in on the dashboard needs its address in Supabase → **Auth → URL configuration → Redirect URLs**.
+     Email and password work without it.
+5. Optional: `PROVIDER_BUDGETS_MONTHLY=anthropic:300,minimax:200,runpod:400` to see what's left of each provider's
+   monthly budget, and `ENGINE_URL` if the app should be checked at another address than `PUBLIC_BASE_URL`.
+
+It costs a few dollars a month on Railway, and opens 3 database connections at most (`DB_POOL_MAX`): Supabase's
+session pooler allows only so many in all. Deploy the app first: the dashboard reads tables the app adds when it
+starts (migration 012), and says so until they exist.
+
 ## 5. Launch check (10 minutes)
 
 1. Sign up with email and with Google.
@@ -200,6 +219,30 @@ old content-check verdicts, and the API's expired outputs and logs.
     receiver (webhook.site) shows a `Backlot-Signature`. Revoke the key afterwards.
 
 ## Operations
+- **Ops dashboard** (its own service and address, see 4 above; admins only): everything about the platform, on
+  eight pages that refresh themselves:
+  - **Overview:** is the app, database, job worker, video and payments up; a "needs you" list (stuck renders, a
+    silent worker, server errors, failing webhooks or payments, budgets running out, films left at the approval
+    step…); today's numbers; 30-day trends; what just happened
+  - **Live:** who's online, every film and clip being made and its stage, renders in flight, background steps, GPUs
+  - **Business:** revenue, costs, profit, MRR, revenue per paying customer, churn, lifetime value, what each film
+    and clip earns against what it costs, the last 12 months, credits owed, failed videos, who costs the most
+  - **Customers:** sign-up → plan → first video → paying again, daily/weekly/monthly active customers, weekly
+    retention, paying customers gone quiet, every customer searchable, and each one's whole story
+  - **Product:** how many press "Make my video" at the approval step, time in each stage, where videos fail,
+    render success and times, takes per shot
+  - **Backend:** API traffic, response times and errors per route, background steps, the worker's heartbeat and
+    gaps, queue and GPU history, database size, tables, connections and slow queries, storage, payment webhooks
+  - **Providers:** spend per provider per day, this month against `PROVIDER_BUDGETS_MONTHLY`, the RunPod balance,
+    Claude by writing step and model, video by provider, what a video costs on average
+  - **Safety:** content checks and refusals (category and the reason shown, never the prompt), repeat offenders,
+    rate limits, sign-in failures, forged webhooks, accounts that cost more than they pay
+
+  What the engine records for it (migration 012, `engine/src/telemetry.ts`): API requests per minute and route
+  (kept 35 days), which days each customer was active, the platform's vital signs once a minute (35 days), every
+  stage a video enters, content-check verdicts, and payment webhook deliveries (180 days). When you delete an
+  account by hand, also delete its usage records:
+  `delete from activity_days where owner_id = '<id>'; delete from stage_events where owner_id = '<id>'; delete from moderation_events where owner_id = '<id>';`
 - **Admin** (`/admin`, users in `ADMIN_USER_IDS`) is the company dashboard, for the last 7 days, 30 days,
   90 days or 12 months:
   - money: revenue (plans and top-ups), costs (AI and GPU, fixed bills, estimated payment fees), profit and

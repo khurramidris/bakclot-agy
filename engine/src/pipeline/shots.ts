@@ -250,7 +250,7 @@ async function directEpisode(p: any, ep: any, scenes: any[], A: Awaited<ReturnTy
     scenes: scenes.map((sc: any) => ({ idx: sc.idx, heading: sc.heading, body: sc.body, est_seconds: sc.est_seconds, card: cardFor(p, ep.idx, sc) })),
   };
   const r = await claudeJSON<Direction>({ task: 'direct', system: DIRECT_SYSTEM, prompt: directPrompt(input), input, schema: DirectionSchema, effort: config.anthropic.effort, maxTokens: 32000, bulk: longProject(p, episodes) });
-  await recordUsage({ ownerId: p.owner_id, projectId: p.id, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), ref: `direct:${ep.id}` });
+  await recordUsage({ ownerId: p.owner_id, projectId: p.id, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), model: r.model, ref: `direct:${ep.id}` });
   const d = r.data || ({} as Direction);
   return { visual_approach: String(d.visual_approach || ''), motifs: Array.isArray(d.motifs) ? d.motifs : [], scenes: Array.isArray(d.scenes) ? d.scenes : [] };
 }
@@ -302,7 +302,7 @@ export async function planEpisode(episodeId: string, ctx: JobCtx, o: { force?: b
       exemplars: exemplarsFor(tags, `${p.id}:${sc.id}`),
     };
     const r = await claudeJSON({ task: 'shots', system: SHOTS_SYSTEM, prompt: shotsPrompt(input), input, schema: ShotsSchema, effort: config.anthropic.planningEffort, maxTokens: 24000, bulk: long });
-    await recordUsage({ ownerId: p.owner_id, projectId: p.id, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), ref: `plan:${sc.id}` });
+    await recordUsage({ ownerId: p.owner_id, projectId: p.id, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), model: r.model, ref: `plan:${sc.id}` });
     const fixed = repairShots(r.data, dialogue, { chars: knownChars, props: knownProps }, sc.est_seconds, actions);
     await ctx.progress(`Planning shots: ${++done} of ${scenes.length} scenes`);
     const light = dirOf(sc.idx)?.light || '';
@@ -341,7 +341,7 @@ export async function reviseShot(shotId: string, note: string) {
   const dialogue = s.plan.beats.flatMap((b: Beat) => b.dialogue || []);
   const input = { code: s.code, scene: s.heading, plan: s.plan, note, dialogue };
   const r = await claudeJSON({ task: 'retake', system: RETAKE_SYSTEM, prompt: retakePrompt(input), input, schema: RetakeSchema, fast: true, effort: 'medium', maxTokens: 16000 });
-  await recordUsage({ ownerId: p.owner_id, projectId: p.id, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), ref: `retake:${shotId}` });
+  await recordUsage({ ownerId: p.owner_id, projectId: p.id, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), model: r.model, ref: `retake:${shotId}` });
   const known = { chars: new Set<string>(A.rows.filter((x: any) => x.kind === 'character').map((x: any) => x.key)), props: new Set<string>(A.rows.filter((x: any) => x.kind === 'prop').map((x: any) => x.key)) };
   const fixed = repairShots({ shots: [(r.data as any)?.shot || r.data], screen_positions: s.plan.screen_positions }, dialogue.map((d: any) => ({ who: d.who, line: d.line })), known, s.duration);
   // A revision must stay one shot; if repair split it, keep the first and fold the rest's dialogue back in by keeping the original.

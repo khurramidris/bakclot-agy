@@ -1,9 +1,10 @@
 // What providers cost us (for margins and spend reports). Customer money lives in billing.ts.
 import { sql } from './db.js';
 
-export async function recordUsage(o: { ownerId: string; projectId?: string | null; kind: 'llm' | 'image' | 'voice' | 'video'; units: number; cost: number; ref?: string; estimated?: boolean }) {
-  await sql`insert into usage_events (owner_id, project_id, kind, ref_id, units, cost_usd, estimated)
-    values (${o.ownerId}, ${o.projectId ?? null}, ${o.kind}, ${o.ref ?? null}, ${o.units}, ${o.cost}, ${o.estimated ?? false})`;
+/** `model`: the Claude model that answered a writing call (kind llm), for the ops dashboard's costs by model. */
+export async function recordUsage(o: { ownerId: string; projectId?: string | null; kind: 'llm' | 'image' | 'voice' | 'video'; units: number; cost: number; ref?: string; estimated?: boolean; model?: string | null }) {
+  await sql`insert into usage_events (owner_id, project_id, kind, ref_id, units, cost_usd, estimated, model)
+    values (${o.ownerId}, ${o.projectId ?? null}, ${o.kind}, ${o.ref ?? null}, ${o.units}, ${o.cost}, ${o.estimated ?? false}, ${o.model ?? null})`;
 }
 
 export async function projectSpend(projectId: string) {

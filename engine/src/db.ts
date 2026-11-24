@@ -1,6 +1,6 @@
 import postgres from 'postgres';
 import { readdir, readFile } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 
@@ -8,8 +8,13 @@ import { config } from './config.js';
 // on another machine is encrypted whenever the server offers TLS (libpq's default, 'prefer'); an sslmode in the URL wins.
 const remote = !/@(localhost|127\.0\.0\.1|\[::1\])(:\d+)?\//.test(config.databaseUrl) && !/[?&](sslmode|ssl)=/i.test(config.databaseUrl);
 
+// Which service holds a connection (the ops dashboard groups them by this name): the app, a separate worker, or ops.
+const script = basename(process.argv[1] || '');
+const appName = /^ops\.[jt]s$/.test(script) ? 'backlot-ops' : /^worker\.[jt]s$/.test(script) ? 'backlot-worker' : 'backlot';
+
 const options = {
   ...(remote ? { ssl: 'prefer' as const } : {}),
+  connection: { application_name: appName },
   idle_timeout: 30,
   onnotice: () => {},
   // Supabase's pooler (port 6543, transaction mode) does not support prepared statements.
@@ -17,7 +22,9 @@ const options = {
   types: { bigint: postgres.BigInt },
 };
 
-export const sql = postgres(config.databaseUrl, { ...options, max: config.db.poolMax });
+// Supabase's session pooler allows only so many connections in all: the ops dashboard makes do with a few.
+const poolMax = process.env.DB_POOL_MAX ? Math.max(2, Number(process.env.DB_POOL_MAX) || 10) : (appName === 'backlot-ops' ? 3 : config.db.poolMax);
+export const sql = postgres(config.databaseUrl, { ...options, max: poolMax });
 
 export type Sql = typeof sql;
 

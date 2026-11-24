@@ -81,11 +81,17 @@ async function moderateOne(o: { ownerId: string; projectId?: string | null; text
   if (!config.moderation) return { allowed: true, category: 'none', reason: 'checks are off' };
   if (config.mock) { // the e2e suites use FORCE_SENSITIVE to exercise refusals
     const bad = /FORCE_SENSITIVE/.test(o.text);
-    return { allowed: !bad, category: bad ? 'other' : 'none', reason: bad ? 'The mock check refuses FORCE_SENSITIVE.' : 'ok' };
+    const v = { allowed: !bad, category: bad ? 'other' : 'none', reason: bad ? 'The mock check refuses FORCE_SENSITIVE.' : 'ok' };
+    await logCheck(o, null, v, false);
+    return v;
   }
   const hash = hashOf(o.text, images);
   const [hit] = await sql`select allowed, category, reason from moderations where hash = ${hash}`;
-  if (hit) return { allowed: hit.allowed, category: hit.category, reason: hit.reason };
+  if (hit) {
+    const v = { allowed: hit.allowed, category: hit.category, reason: hit.reason };
+    await logCheck(o, hash, v, true);
+    return v;
+  }
 
   let verdict: Verdict;
   try {
@@ -95,7 +101,7 @@ async function moderateOne(o: { ownerId: string; projectId?: string | null; text
       images: images.map((im) => ({ mime: im.mime, b64: im.data.toString('base64') })),
     });
     verdict = { allowed: !!r.data.allowed, category: r.data.allowed ? 'none' : r.data.category || 'other', reason: String(r.data.reason || '').slice(0, 300) };
-    await recordUsage({ ownerId: o.ownerId, projectId: o.projectId ?? null, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), ref: 'moderation' });
+    await recordUsage({ ownerId: o.ownerId, projectId: o.projectId ?? null, kind: 'llm', units: llmUnits(r.usage), cost: llmCost(r.model, r.usage), model: r.model, ref: 'moderation' });
   } catch (e) {
     // Claude declining to look at it is an answer too.
     if (e instanceof PermanentError && e.code === 'refused') verdict = { allowed: false, category: 'other', reason: 'This request can’t be made on Backlot.' };
@@ -103,7 +109,15 @@ async function moderateOne(o: { ownerId: string; projectId?: string | null; text
   }
   await sql`insert into moderations (hash, allowed, category, reason) values (${hash}, ${verdict.allowed}, ${verdict.category}, ${verdict.reason})
     on conflict (hash) do nothing`;
+  await logCheck(o, hash, verdict, false);
   return verdict;
+}
+
+/** Who was checked and the verdict, for the ops dashboard: never the text or the pictures. Never fails the check. */
+async function logCheck(o: { ownerId: string; projectId?: string | null }, hash: string | null, v: Verdict, cached: boolean) {
+  await sql`insert into moderation_events (owner_id, project_id, hash, allowed, category, cached)
+    values (${o.ownerId}, ${o.projectId ?? null}, ${hash}, ${v.allowed}, ${v.allowed ? null : v.category}, ${cached})`
+    .catch((e) => console.error('[moderation] could not log the verdict:', e.message));
 }
 
 /** The error a customer sees when a request is refused (HTTP 422, code sensitive_content). */

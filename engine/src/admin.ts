@@ -64,8 +64,11 @@ async function customer(ownerId: string) {
 }
 
 /** Everything support needs about one customer. */
-admin.get('/customers/:id', async (c) => {
-  const a = await customer(c.req.param('id'));
+admin.get('/customers/:id', async (c) => c.json(plain(await customerDetail(c.req.param('id')))));
+
+/** One customer's plan, credits, storage, subscriptions, credit ledger, payments and films (also used by the ops dashboard). */
+export async function customerDetail(ownerId: string) {
+  const a = await customer(ownerId);
   const id = a.owner_id;
   const [credits, plan, used, subscriptions, events, payments, projects] = await Promise.all([
     balances(id), planOf(id), storageUsed(id),
@@ -85,13 +88,13 @@ admin.get('/customers/:id', async (c) => {
       (select count(*)::int from api_refusals x where x.owner_id = ${id} and x.created_at > now() - interval '24 hours') refusals_24h,
       (select coalesce(-sum(delta_usd), 0)::float from credit_events e where e.owner_id = ${id} and e.api_key_id is not null and e.created_at > now() - interval '30 days') spend_30d
     from (select 1) one left join api_accounts a on a.owner_id = ${id}`;
-  return c.json(plain({
+  return {
     customer: a, credits, plan, storage: { used_bytes: used, quota_bytes: storageQuotaBytes() },
     subscriptions, credit_events: events, payments, projects,
     api: { suspended: !!api.suspended_at, suspended_reason: api.suspended_reason, suspended_at: api.suspended_at, active_keys: api.active_keys,
       requests_30d: api.requests_30d, refusals_24h: api.refusals_24h, spend_30d_usd: Math.round(api.spend_30d * 100) / 100 },
-  }));
-});
+  };
+}
 
 /** Suspend or lift a customer's API access (it is suspended automatically after repeated content refusals). */
 admin.post('/customers/:id/api', async (c) => {

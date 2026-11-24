@@ -71,7 +71,7 @@ export async function runBreakdown(projectId: string, ctx: JobCtx, o: { force?: 
       scenes: batch.map((s) => ({ ref: s.ref, heading: s.heading, location: s.location, time: s.time, int_ext: s.int_ext, present: s.present, speakers: s.speakers, excerpt: s.body.slice(0, 900) })),
     };
     const res = await claudeJSON<BreakdownResult>({ task: 'breakdown', system: BREAKDOWN_SYSTEM, prompt: breakdownPrompt(input), input, schema: BreakdownSchema as any, effort: config.anthropic.effort, maxTokens: 32000, bulk: long });
-    await recordUsage({ ownerId: p.owner_id, projectId, kind: 'llm', units: llmUnits(res.usage), cost: llmCost(res.model, res.usage), ref: long ? `breakdown:${i + 1}` : 'breakdown' });
+    await recordUsage({ ownerId: p.owner_id, projectId, kind: 'llm', units: llmUnits(res.usage), cost: llmCost(res.model, res.usage), model: res.model, ref: long ? `breakdown:${i + 1}` : 'breakdown' });
     answers.push(res.data);
   }
   const bd = repair(long ? mergeBreakdowns(answers) : answers[0], scenes, bibleChars);

@@ -26,6 +26,7 @@ left is creating accounts, pasting keys into one place (Railway), and checking i
 | 5 | Lemon Squeezy store in test mode (subscriptions) | you | 30 min |
 | 6 | Railway (runs the site) | you | 20 min |
 | 7 | Make yourself admin | you | 5 min |
+| 7b | Optional: your ops dashboard, a second Railway service | you | 10 min |
 | 8 | Setup check page all green | you, then me for anything odd | 10 min |
 | 9 | Your own test film and clip, and look at the costs | you | 30 min |
 | 10 | Company details on the Terms and Privacy pages (4 settings) | you | 5 min |
@@ -158,6 +159,17 @@ Supabase's built-in email only sends a few messages an hour, so testers would ge
 2. Go to **Account**. At the bottom, click **Your user id** to copy it.
 3. In Railway → Variables, add `ADMIN_USER_IDS=<your user id>`. It redeploys.
 
+## 7b. Your ops dashboard (optional, 10 minutes)
+Everything happening on Backlot on one site of its own: whether it's all up, what needs you, money, customers,
+what's being made, the servers and every provider's spend. It keeps working if the main site has trouble.
+1. In your Railway project: **New → GitHub Repo → khurramidris/backlot**. A second service starts building.
+2. Open it → **Settings → Deploy → Custom Start Command** → `node dist/ops.js`.
+3. **Variables → Raw Editor**: paste exactly what the main service has (copy it from the main service's Raw Editor).
+4. **Settings → Networking → Generate Domain**. Open that address and sign in with your Backlot email and password.
+   Only accounts in `ADMIN_USER_IDS` get in.
+5. Optional: add `PROVIDER_BUDGETS_MONTHLY=anthropic:100,minimax:100` (your monthly limits) to both services, and
+   the Providers page shows what's left and how many days it lasts.
+
 ## 8. Setup check
 1. Refresh the site. A **Setup check** item appears in the sidebar (admins only). Open it.
 2. It tests every key and setting for real. Fix anything **red**; each line says how. Amber lines are notes.
@@ -226,7 +238,8 @@ Start with 10–20 people. The **Admin** page (sidebar, admins only) is the comp
 Click a customer to see their films, what each cost you against what they paid, and their credit history. You
 can also **give or take back credit** there with a note, for example if a film came out badly.
 
-Also keep an eye on the MiniMax balance, and send me anything that looks wrong.
+With the ops dashboard (step 7b), open its **Overview** each day: the "Needs you" list at the top says what to look
+at first. Also keep an eye on the MiniMax balance, and send me anything that looks wrong.
 
 ## 11b. Open the developer API (when the costs check out)
 The API lets other companies make clips and microdramas from their own code, paying from prepaid credit (no plan
@@ -250,7 +263,7 @@ needed). It's built and tested, and stays off until you switch it on.
 4. Run the Setup check: the webhook line turns from amber ("test mode") to green ("live mode").
 
 ## Monthly running costs during the beta (rough)
-- **Railway:** $5 (Hobby plan, includes $5 of use), more as traffic grows
+- **Railway:** $5 (Hobby plan, includes $5 of use), more as traffic grows; the ops dashboard adds a few dollars
 - **Supabase:** free (Pro, $25, once you have customers)
 - **Cloudflare R2:** free up to 10 GB of videos
 - **Resend:** free. A domain for the sender address is about $10 a year.

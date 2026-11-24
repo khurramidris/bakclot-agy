@@ -9,6 +9,7 @@ import { assembleCut } from './pipeline/assemble.js';
 import { runAutopilot, autopilotFailed } from './pipeline/autopilot.js';
 import { capacityTick, startCapacityController } from './capacity.js';
 import { cleanup, startCleanup } from './maintenance.js';
+import { snapshotTick, startSnapshots } from './telemetry.js';
 import { sql } from './db.js';
 import { config } from './config.js';
 import { jobKey, paidForProject, releaseCharges } from './billing.js';
@@ -77,10 +78,12 @@ export function registerJobs() {
   register('project.autopilot:failed', autopilotFailed);
   register('system.capacity', () => capacityTick());
   register('system.cleanup', () => cleanup());
+  register('system.snapshot', () => snapshotTick());
 }
 
-/** The deployment-wide jobs that reschedule themselves for ever: GPU capacity and housekeeping. Safe to call on every start. */
+/** The deployment-wide jobs that reschedule themselves for ever: GPU capacity, housekeeping and ops snapshots. Safe to call on every start. */
 export async function startSystemJobs() {
   await startCapacityController();
   await startCleanup();
+  await startSnapshots();
 }
