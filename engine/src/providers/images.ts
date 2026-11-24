@@ -20,6 +20,9 @@ export interface ImageResult { data: Buffer; mime: string; provider: string }
 const IMG_ASPECTS = ['1:1', '16:9', '4:3', '3:2', '2:3', '3:4', '9:16', '21:9'];
 const nearestAspect = (a: string) => (IMG_ASPECTS.includes(a) ? a : a === '4:5' ? '3:4' : '1:1');
 
+/** Whether a provider can take a place (room, street) reference picture. MiniMax image-01 only takes a face. */
+export const placeRefsSupported = (provider: string) => provider !== 'minimax';
+
 export async function generateImage(req: ImageRequest): Promise<ImageResult> {
   if (config.mock) return { data: await mockImage(req), mime: 'image/png', provider: 'mock' };
   let provider = req.provider || config.images.provider;
@@ -46,7 +49,7 @@ async function gemini(req: ImageRequest): Promise<Buffer> {
   const parts: any[] = [{ text: req.prompt }];
   for (const r of req.refs || []) parts.push({ inlineData: { mimeType: r.mime, data: r.data.toString('base64') } });
   const r = await fetch(`${config.images.geminiBaseUrl}/v1beta/models/${config.images.geminiModel}:generateContent`, {
-    method: 'POST',
+    method: 'POST', signal: AbortSignal.timeout(180_000),
     headers: { 'content-type': 'application/json', 'x-goog-api-key': config.images.geminiKey },
     body: JSON.stringify({
       contents: [{ role: 'user', parts }],
@@ -77,10 +80,10 @@ async function openai(req: ImageRequest): Promise<Buffer> {
     fd.append('size', size);
     fd.append('input_fidelity', 'high');
     req.refs.forEach((x, i) => fd.append('image[]', new Blob([new Uint8Array(x.data)], { type: x.mime }), `ref${i}.png`));
-    r = await fetch(`${config.images.openaiBaseUrl}/v1/images/edits`, { method: 'POST', headers: auth, body: fd });
+    r = await fetch(`${config.images.openaiBaseUrl}/v1/images/edits`, { method: 'POST', headers: auth, body: fd, signal: AbortSignal.timeout(240_000) });
   } else {
     r = await fetch(`${config.images.openaiBaseUrl}/v1/images/generations`, {
-      method: 'POST', headers: { ...auth, 'content-type': 'application/json' },
+      method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, signal: AbortSignal.timeout(240_000),
       body: JSON.stringify({ model: config.images.openaiModel, prompt: req.prompt, size, n: 1 }),
     });
   }

@@ -6,6 +6,7 @@ import { sql } from './db.js';
 import { config } from './config.js';
 import { isActiveStatus } from './billing.js';
 import { endpointHealth } from './providers/runpod.js';
+import { capacitySnapshot, runpodInUse } from './capacity.js';
 
 const DAY_MS = 86_400_000;
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -93,8 +94,18 @@ export async function businessReport(daysIn: number) {
       coalesce(extract(epoch from now() - min(run_after) filter (where status = 'queued' and run_after <= now())) / 60, 0)::float oldest_ready_minutes
     from jobs`;
   const [files] = await sql`select coalesce(sum(bytes), 0)::bigint bytes, count(*)::int n from files`;
-  const gpu = config.videoProvider === 'runpod' ? await endpointHealth().catch((e: any) => ({ error: String(e.message || e) })) : null;
+  const gpu = runpodInUse() ? await endpointHealth().catch((e: any) => ({ error: String(e.message || e) })) : null;
+  const capacity = await capacitySnapshot();
 
+  // The public API: who uses it, how much, and how much it earns.
+  const [apiUse] = await sql`select (select count(distinct owner_id)::int from api_keys where revoked_at is null) developers,
+      (select count(*)::int from api_accounts where suspended_at is not null) suspended,
+      (select count(*)::int from api_requests where created_at > ${since}) requests,
+      (select count(*)::int from api_requests where created_at > ${since} and status >= 500) server_errors,
+      (select count(*) filter (where mode = 'clip')::int from projects where origin = 'api' and created_at > ${since}) videos,
+      (select count(*) filter (where mode = 'vibe')::int from projects where origin = 'api' and created_at > ${since}) films,
+      (select coalesce(-sum(delta_usd), 0)::float from credit_events where api_key_id is not null and created_at > ${since}) spend_usd,
+      (select count(*)::int from webhook_deliveries where status = 'failed' and created_at > ${since}) webhooks_failed`;
   const revenue = r2(pay.usd);
   const net = r2(revenue - fees);
   const profit = r2(net - providerUsd - fixedUsd);
@@ -124,12 +135,13 @@ export async function businessReport(daysIn: number) {
     },
     daily: daily.map((d: any) => ({ ...d, revenue_usd: r2(d.revenue_usd), cost_usd: r2(d.cost_usd) })),
     problems: { render_errors: errors, job_errors: jobErrors, failed_projects: failures },
+    api: { enabled: config.api.enabled, ...apiUse, spend_usd: r2(apiUse.spend_usd) },
     top_customers: top.map((t: any) => ({ ...t, cost_usd: r2(t.cost_usd), paid_usd: r2(t.paid_usd) })),
     health: {
       video_provider: config.videoProvider, renders_waiting: queue.waiting, renders_running: queue.rendering,
       oldest_render_minutes: Math.round(queue.oldest_minutes), jobs_ready: jobs.ready, jobs_running: jobs.running,
       jobs_failed_24h: jobs.failed_24h, oldest_job_wait_minutes: Math.round(jobs.oldest_ready_minutes),
-      storage_bytes: Number(files.bytes), stored_files: files.n, gpu,
+      storage_bytes: Number(files.bytes), stored_files: files.n, gpu, capacity,
     },
   };
 }

@@ -45,11 +45,11 @@ python test_h3.py      # H3 backend: graph, staging, errors, restarts (fake Comf
    - GPU: 24 GB PRO (RTX 4090), then 32 GB PRO (RTX 5090). **Allowed CUDA versions: 13.0** (the image needs a CUDA 13 driver).
    - Attach the network volume. No environment variables are required (`MODEL_BACKEND=h3` is the image default;
      `fake` for a dry run). Optional ones are in `backends/h3.py` and `docs/SELF-HOSTED-H3.md`.
-   - Workers: min 0, max = your budget cap (the engine's `RUNPOD_MAX_WORKERS` keeps this in sync).
+   - Workers: min 0, max = your budget cap. The engine sets both from then on (`RUNPOD_MAX_WORKERS` is the max).
    - Scaling: **Queue delay**, about 4 s. Idle timeout: 60–120 s. **FlashBoot on.**
    - Execution timeout: 30 min (matches the engine's `RUNPOD_EXECUTION_TIMEOUT_SEC`).
-4. Give the engine `VIDEO_PROVIDER=runpod`, `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`, then
-   `RUNPOD_MANAGE_SCALING=1` once you've watched a few decisions in `/v1/admin/capacity`.
+4. Give the engine `VIDEO_PROVIDER=runpod`, `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID` and `RUNPOD_MAX_WORKERS`. Autoscaling
+   is on by default with RunPod (`RUNPOD_MANAGE_SCALING=0` turns it off); `/v1/admin/capacity` shows its decisions.
 
 One job at a time per worker. A worker runs its own ComfyUI on 127.0.0.1 (no credentials in its environment) and
 stops anything a cancelled job left running before it starts the next one.
@@ -58,8 +58,9 @@ stops anything a cancelled job left running before it starts the next one.
 
 - **Up:** RunPod adds workers when jobs wait longer than the queue-delay setting.
 - **Down:** idle workers stop after the idle timeout, down to the endpoint's minimum.
-- **The minimum** is set by the engine's warm-pool controller:
+- **The minimum** is set by the engine's controller (`engine/src/capacity.ts`), every 30 s and as soon as work is queued:
   - 0 when nobody has rendered for `RUNPOD_WARM_MINUTES` (no GPU bill while idle)
   - `RUNPOD_WARM_WORKERS` while customers are active (no multi-minute cold starts)
-  - more when the queue is deep
-- **The ceiling** is always `RUNPOD_MAX_WORKERS`.
+  - one GPU per `RUNPOD_JOBS_PER_WORKER` renders that can run now, when that's more
+- **The ceiling** is always `RUNPOD_MAX_WORKERS`: the engine sets the endpoint's max workers to it, and sends at most
+  max workers × jobs per worker renders at once. The Admin page says when demand needs more GPUs than that.

@@ -21,7 +21,7 @@ async function userFromSupabase(token: string): Promise<Who | null> {
   if (!config.auth.supabaseUrl || !config.auth.supabaseAnonKey) return null;
   const hit = remoteCache.get(token);
   if (hit && hit.until > Date.now()) return hit.who;
-  const r = await fetch(`${config.auth.supabaseUrl}/auth/v1/user`, { headers: { apikey: config.auth.supabaseAnonKey, authorization: `Bearer ${token}` } }).catch(() => null);
+  const r = await fetch(`${config.auth.supabaseUrl}/auth/v1/user`, { headers: { apikey: config.auth.supabaseAnonKey, authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8_000) }).catch(() => null);
   if (!r || r.status >= 500) return null; // Supabase unreachable: don't cache
   const u: any = r.ok ? await r.json().catch(() => null) : null;
   const who = u && typeof u.id === 'string' && UUID.test(u.id) ? { uid: u.id as string, email: emailOf(u.email) } : null;

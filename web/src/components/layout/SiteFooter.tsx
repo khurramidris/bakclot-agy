@@ -18,6 +18,9 @@ export function SiteFooter() {
         </div>
         <StoryLine className="hidden text-foreground/60 lg:inline" />
         <div className="flex items-center gap-6">
+          <Link to="/docs/api" className="meta-label hover:text-primary">
+            API
+          </Link>
           <Link to="/terms" className="meta-label hover:text-primary">
             Terms
           </Link>

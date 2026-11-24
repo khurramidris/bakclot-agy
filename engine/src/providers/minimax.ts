@@ -57,7 +57,7 @@ export interface H3Task {
 }
 
 export async function createVideoTask(body: H3Request): Promise<string> {
-  const r = await fetch(`${base()}/v2/video_generation`, { method: 'POST', headers: headers(), body: JSON.stringify(body) })
+  const r = await fetch(`${base()}/v2/video_generation`, { method: 'POST', headers: headers(), body: JSON.stringify(body), signal: AbortSignal.timeout(180_000) })
     .catch((e) => { throw new ProviderError(`H3 submit network error: ${e.message}`, 'network', true); });
   if (!r.ok) throw await v2Error(r, 'H3 submit');
   const j = await r.json();
@@ -66,7 +66,7 @@ export async function createVideoTask(body: H3Request): Promise<string> {
 }
 
 export async function queryVideoTask(taskId: string): Promise<H3Task> {
-  const r = await fetch(`${base()}/v2/query/video_generation/${encodeURIComponent(taskId)}`, { headers: headers() })
+  const r = await fetch(`${base()}/v2/query/video_generation/${encodeURIComponent(taskId)}`, { headers: headers(), signal: AbortSignal.timeout(30_000) })
     .catch((e) => { throw new ProviderError(`H3 query network error: ${e.message}`, 'network', true); });
   if (!r.ok) throw await v2Error(r, 'H3 query');
   const j = await r.json();
@@ -96,7 +96,7 @@ export async function minimaxImage(o: MMImageOpts): Promise<Buffer[]> {
   };
   if (o.seed !== undefined) body.seed = o.seed;
   if (o.subjectRef) body.subject_reference = [{ type: 'character', image_file: o.subjectRef }];
-  const r = await fetch(`${base()}/v1/image_generation`, { method: 'POST', headers: headers(), body: JSON.stringify(body) });
+  const r = await fetch(`${base()}/v1/image_generation`, { method: 'POST', headers: headers(), body: JSON.stringify(body), signal: AbortSignal.timeout(180_000) });
   if (!r.ok) throw await v2Error(r, 'image-01');
   const j = await r.json();
   const sc = j.base_resp?.status_code;
@@ -107,7 +107,7 @@ export async function minimaxImage(o: MMImageOpts): Promise<Buffer[]> {
   const arr: string[] = j.data?.image_base64 || [];
   if (!arr.length) {
     const urls: string[] = j.data?.image_urls || [];
-    return Promise.all(urls.map(async (u) => Buffer.from(await (await fetch(u)).arrayBuffer())));
+    return Promise.all(urls.map(async (u) => Buffer.from(await (await fetch(u, { signal: AbortSignal.timeout(60_000) })).arrayBuffer())));
   }
   return arr.map((b) => Buffer.from(b, 'base64'));
 }
@@ -116,7 +116,7 @@ export async function minimaxImage(o: MMImageOpts): Promise<Buffer[]> {
 
 export async function voiceDesign(prompt: string, previewText: string): Promise<{ voiceId: string; audio: Buffer }> {
   const r = await fetch(`${base()}/v1/voice_design`, {
-    method: 'POST', headers: headers(),
+    method: 'POST', headers: headers(), signal: AbortSignal.timeout(120_000),
     body: JSON.stringify({ prompt: prompt.slice(0, 1000), preview_text: previewText.slice(0, 500) }),
   });
   if (!r.ok) throw await v2Error(r, 'voice design');

@@ -1,16 +1,13 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
-
 User-agent: *
 Allow: /
-
-Sitemap: https://scene-scribe-studio-91.lovable.app/sitemap.xml
+Disallow: /dashboard
+Disallow: /p/
+Disallow: /billing
+Disallow: /account
+Disallow: /developers
+Disallow: /admin
+Disallow: /setup
+Disallow: /reset-password
+Disallow: /v1/
+Disallow: /api/
+Disallow: /files/

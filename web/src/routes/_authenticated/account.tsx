@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { engine, planLabel } from "@/lib/engine";
+import { LEGAL, supportHref } from "@/lib/legal";
 import { devUserId } from "@/lib/supabase";
 import { signOut, updateEmail, updatePassword } from "@/modules/auth/auth.service";
 import { useAuth } from "@/modules/auth/useAuth";
@@ -98,8 +99,15 @@ function Account() {
             </p>
           ) : null}
           <p className="mt-3 text-xs text-muted-foreground">
-            To close your account and delete everything, email support from your account address.
-            See the{" "}
+            To close your account and delete everything, email{" "}
+            {supportHref() ? (
+              <a href={supportHref()!} className="underline underline-offset-2">
+                {LEGAL.email}
+              </a>
+            ) : (
+              "support"
+            )}{" "}
+            from your account address. See the{" "}
             <Link to="/privacy" className="underline underline-offset-2">
               privacy policy
             </Link>

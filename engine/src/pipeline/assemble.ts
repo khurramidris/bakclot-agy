@@ -7,10 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
-import { sql } from '../db.js';
+import { sql, begin } from '../db.js';
 import { config } from '../config.js';
 import { storage } from '../storage.js';
-import { PermanentError } from '../queue.js';
+import { PermanentError, enqueue } from '../queue.js';
 import { ffmpeg, probe, subtitleFontsDir, textFilter, thumbnail } from '../media/ffmpeg.js';
 import { speechSeconds, type ShotPlan } from './compiler.js';
 
@@ -31,7 +31,32 @@ export function parseCutOptions(raw: unknown, projectId: string): CutOptions {
   return r.data;
 }
 
-/** Ask for an assembly. Final cuts need every shot approved; previews use whatever is newest. */
+/**
+ * Ask for an edit and queue it. An identical edit of the same episode that is still waiting to start is reused (it
+ * will pick up the newest clips anyway), so asking a hundred times makes one edit, not a hundred. The cut and its job
+ * are created together, under a lock on the episode.
+ */
+export async function queueCut(episodeId: string, kind: 'final' | 'preview', rawOptions: unknown): Promise<{ cut: any; job_id: number | null; reused: boolean }> {
+  const [e] = await sql`select project_id from episodes where id = ${episodeId}`;
+  if (!e) throw new PermanentError('episode not found', 'not_found');
+  const options = parseCutOptions(rawOptions, e.project_id);
+  const shots = await sql`select id, code, status, approved_take_id from shots where episode_id = ${episodeId} order by idx`;
+  if (!shots.length) throw new PermanentError('This episode has no shots yet.', 'bad_state');
+  if (kind === 'final') {
+    const missing = shots.filter((s: any) => s.status !== 'approved' || !s.approved_take_id);
+    if (missing.length) throw Object.assign(new PermanentError(`${missing.length} shot(s) still need approval: ${missing.slice(0, 12).map((s: any) => s.code).join(', ')}${missing.length > 12 ? '…' : ''}`, 'not_approved'), { missing: missing.map((s: any) => s.id) });
+  }
+  return begin(async (tx) => {
+    await tx`select id from episodes where id = ${episodeId} for update`;
+    const [waiting] = await tx`select * from cuts where episode_id = ${episodeId} and status = 'queued' and kind = ${kind} and options = ${tx.json(options as any)}::jsonb order by created_at desc limit 1`;
+    if (waiting) return { cut: waiting, job_id: null, reused: true };
+    const [cut] = await tx`insert into cuts (project_id, episode_id, kind, options) values (${e.project_id}, ${episodeId}, ${kind}, ${tx.json(options as any)}) returning *`;
+    const job_id = await enqueue('cut.assemble', { cutId: cut.id }, { projectId: e.project_id, maxAttempts: 2, tx });
+    return { cut, job_id, reused: false };
+  });
+}
+
+/** Ask for an assembly. Final cuts need every shot approved; previews use whatever is newest. (Tests use this; the engine uses queueCut.) */
 export async function requestCut(episodeId: string, kind: 'final' | 'preview', rawOptions: unknown) {
   const [e] = await sql`select project_id from episodes where id = ${episodeId}`;
   const options = parseCutOptions(rawOptions, e.project_id);

@@ -65,6 +65,22 @@ def probe(path: str) -> dict:
     }
 
 
+def fit_length(path: str, seconds: float, workdir: str) -> str:
+    """H3 makes clips on a fixed frame grid (5.17 s for a 4 or 5 s order, 6.58 s for 6 s), so a clip can come out longer
+    than ordered. Cut it to the ordered length, so the engine's checks, the film's timing and the price all agree. Only
+    the tail goes; a clip that is shorter than ordered is left as it is (the engine rejects it)."""
+    if not seconds or probe(path)["seconds"] <= seconds + 0.05:
+        return path
+    out = os.path.join(workdir, "fit.mp4")
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", path, "-t", f"{float(seconds):.3f}",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+         "-movflags", "+faststart", out],
+        check=True, capture_output=True,
+    )
+    return out
+
+
 def upload(path: str, target: dict) -> None:
     with open(path, "rb") as f:
         data = f.read()
@@ -84,6 +100,7 @@ def handler(job: dict) -> dict:
             clip = backend().generate(request, media, workdir)
         except Refused as e:
             return {"error": str(e), "error_code": "sensitive_content"}
+        clip = fit_length(clip, float(request.get("duration") or 0), workdir)
         info = probe(clip)
         upload(clip, target)
     return {"key": target["key"], **info}

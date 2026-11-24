@@ -8,15 +8,16 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { sql } from '../db.js';
+import { sql, begin } from '../db.js';
 import { config } from '../config.js';
 import { storage } from '../storage.js';
 import { PermanentError } from '../queue.js';
 import { requireCredit, sellPrice } from '../billing.js';
-import { ffmpeg, probe, trimAudio } from '../media/ffmpeg.js';
+import { ffmpeg, probe, trimAudio, isUpload, imageSize, safeInput, withMediaSlot, MAX_IMAGE_PIXELS, MAX_VIDEO_SIDE } from '../media/ffmpeg.js';
 import { moderate, refusal } from '../moderation.js';
 import type { H3Content, H3Request } from '../providers/minimax.js';
 import { validateH3 } from './compiler.js';
+import { projectEvent } from '../events.js';
 
 export const CLIP_MODES = ['text', 'image', 'reference', 'remix'] as const;
 export type ClipMode = (typeof CLIP_MODES)[number];
@@ -72,6 +73,10 @@ export function checkClipForm(f: ClipForm) {
 /** "image 2" / "picture 2" / "video 1" / "voice 1" in a customer's prompt → the wording the H3 request uses. */
 export function normalizeRefs(text: string) {
   return text
+    // The model's own tags, which developers copy from its guide: <Picture 2>, <Image 2>, <Video 1>, <Audio 1>.
+    .replace(/<\s*(?:picture|image)\s*(\d)\s*>/gi, 'reference image $1')
+    .replace(/<\s*video\s*(\d)\s*>/gi, 'reference video $1')
+    .replace(/<\s*(?:audio|voice)\s*(\d)\s*>/gi, 'reference audio $1')
     .replace(/(?<!reference\s)\b(?:image|picture|photo|pic|img)\s*#?\s*(\d)\b/gi, 'reference image $1')
     .replace(/(?<!reference\s)\b(?:video|clip)\s*#?\s*1\b/gi, 'reference video 1')
     .replace(/(?<!reference\s)\b(?:audio|voice)\s*#?\s*(\d)\b/gi, 'reference audio $1');
@@ -102,30 +107,39 @@ export function clipPrompt(b: Pick<ClipBrief, 'prompt' | 'inputs'>) {
 // ───────── media ─────────
 
 /** A picture as a JPEG of at most 2048 px (re-encoding also drops metadata such as GPS), plus a small copy for the check. */
-async function prepImage(data: Buffer, dir: string, name: string) {
+export async function prepImage(data: Buffer, dir: string, name: string) {
+  const unreadable = bad('One of the pictures couldn’t be read. Use a JPEG, PNG or WebP.');
+  if (!isUpload('image', data)) throw unreadable; // not a picture at all: FFmpeg never sees it
+  const head = imageSize(data); // a picture that would decode to gigabytes is refused before anything decodes it
+  if (head && head.width * head.height > MAX_IMAGE_PIXELS) throw bad('That picture is too large. Use one of up to 50 megapixels.');
   const raw = join(dir, `${name}.in`);
   await writeFile(raw, data);
-  const info = await probe(raw).catch(() => null);
-  if (!info?.width || !info.height) throw bad('One of the pictures couldn’t be read. Use a JPEG, PNG or WebP.');
+  const info = await probe(raw, 'image').catch(() => null);
+  if (!info?.width || !info.height) throw unreadable;
+  if (info.width * info.height > MAX_IMAGE_PIXELS) throw bad('That picture is too large. Use one of up to 50 megapixels.');
   if (Math.min(info.width, info.height) < 300) throw bad('Pictures need to be at least 300 pixels on their shorter side.');
   const r = info.width / info.height;
   if (r < 0.4 || r > 2.5) throw bad('Pictures need a shape between 2:5 (tall) and 5:2 (wide).');
   const file = join(dir, `${name}.jpg`), small = join(dir, `${name}.small.jpg`);
-  await ffmpeg(['-i', raw, '-vf', "scale='min(2048,iw)':'min(2048,ih)':force_original_aspect_ratio=decrease", '-frames:v', '1', '-q:v', '2', file]);
+  await ffmpeg([...safeInput('image', raw), '-vf', "scale='min(2048,iw)':'min(2048,ih)':force_original_aspect_ratio=decrease", '-frames:v', '1', '-q:v', '2', file], { timeoutMs: 60_000 }).catch(() => { throw unreadable; });
   await ffmpeg(['-i', file, '-vf', "scale='min(1024,iw)':'min(1024,ih)':force_original_aspect_ratio=decrease", '-frames:v', '1', '-q:v', '4', small]);
   return { file, small: await readFile(small) };
 }
 
 /** A video as 24 fps H.264 MP4 of at most 15 s and 1280 px, plus three frames for the check. */
 export async function prepVideo(data: Buffer, dir: string) {
+  const unreadable = bad('The video couldn’t be read. Use an MP4 or MOV file.');
+  if (!isUpload('video', data)) throw unreadable;
   const raw = join(dir, 'video.in');
   await writeFile(raw, data);
-  const info = await probe(raw).catch(() => null);
-  if (!info?.width || !info.duration) throw bad('The video couldn’t be read. Use an MP4 or MOV file.');
+  const info = await probe(raw, 'video').catch(() => null);
+  if (!info?.width || !info.duration) throw unreadable;
+  if (Math.min(info.width, info.height) > MAX_VIDEO_SIDE || info.width * info.height > 8192 * 4320) throw bad('That video’s picture is too large. Use one of up to 8K.');
   if (info.duration < 2) throw bad('The video needs to be at least 2 seconds long.');
   const file = join(dir, 'video.mp4');
-  await ffmpeg(['-i', raw, '-t', '15', '-vf', "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=24",
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart', file], { timeoutMs: 5 * 60_000 });
+  await ffmpeg([...safeInput('video', raw), '-t', '15', '-vf', "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=24",
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart', file], { timeoutMs: 5 * 60_000 })
+    .catch(() => { throw unreadable; });
   return { file, seconds: +Math.min(info.duration, 15).toFixed(2), frames: await framesOf(file, dir, Math.min(info.duration, 15)) };
 }
 
@@ -139,13 +153,16 @@ async function framesOf(video: string, dir: string, seconds: number) {
   return out;
 }
 
-async function prepAudio(data: Buffer, dir: string) {
+/** A voice or music file as a mono MP3 of at most `maxSec` seconds. */
+export async function prepAudio(data: Buffer, dir: string, maxSec = 14, what = 'The voice clip') {
+  const unreadable = bad(`${what} couldn’t be read. Use an MP3, WAV or M4A file.`);
+  if (!isUpload('audio', data)) throw unreadable;
   const raw = join(dir, 'voice.in');
   await writeFile(raw, data);
-  const info = await probe(raw).catch(() => null);
-  if (!info?.acodec || !(info.duration > 0)) throw bad('The voice clip couldn’t be read. Use an MP3, WAV or M4A file.');
+  const info = await probe(raw, 'audio').catch(() => null);
+  if (!info?.acodec || !(info.duration > 0)) throw unreadable;
   const file = join(dir, 'voice.mp3');
-  await trimAudio(raw, file, 14);
+  await trimAudio(raw, file, maxSec, true).catch(() => { throw unreadable; });
   return { file };
 }
 
@@ -153,17 +170,25 @@ export const jpeg = (data: Buffer) => ({ mime: 'image/jpeg', data });
 
 // ───────── create, retake, status ─────────
 
-/** Check the request, store the inputs, create the clip and queue its first render. The render is charged as it starts. */
-export async function createClip(uid: string, f: ClipForm) {
+/** What the public API adds to a clip: the key that made it, where to send the webhook, and the caller's own metadata. */
+export interface ApiOrigin { keyId: string; webhookUrl?: string | null; metadata?: Record<string, unknown> | null }
+
+/**
+ * Check the request, store the inputs, create the clip and queue its first render. The render is charged as it starts.
+ * `api` marks a clip made through the public API (it is then kept out of the app's lists and storage allowance).
+ */
+export async function createClip(uid: string, f: ClipForm, api?: ApiOrigin) {
   checkClipForm(f);
   const seconds = f.seconds, prompt = f.prompt.trim();
   await requireCredit(uid, sellPrice('768P', seconds));
   const dir = await mkdtemp(join(tmpdir(), 'clip-'));
   try {
-    const images: Awaited<ReturnType<typeof prepImage>>[] = [];
-    for (const [i, im] of f.images.entries()) images.push(await prepImage(im.data, dir, `image${i + 1}`));
-    const video = f.video ? await prepVideo(f.video.data, dir) : null;
-    const audio = f.audio ? await prepAudio(f.audio.data, dir) : null;
+    // Decoding uploads is memory-hungry: a few requests at a time (withMediaSlot), the rest wait their turn.
+    const { images, video, audio } = await withMediaSlot(async () => {
+      const images: Awaited<ReturnType<typeof prepImage>>[] = [];
+      for (const [i, im] of f.images.entries()) images.push(await prepImage(im.data, dir, `image${i + 1}`));
+      return { images, video: f.video ? await prepVideo(f.video.data, dir) : null, audio: f.audio ? await prepAudio(f.audio.data, dir) : null };
+    });
 
     const id = randomUUID();
     const inputs: ClipInput[] = [];
@@ -182,9 +207,10 @@ export async function createClip(uid: string, f: ClipForm) {
     if (!verdict.allowed) throw refusal(verdict);
 
     const title = clipTitle(prompt);
-    const shotId = await sql.begin(async (tx) => {
-      await tx`insert into projects (id, owner_id, title, format, aspect, resolution, language, mode, stage, brief)
-        values (${id}, ${uid}, ${title}, 'clip', ${f.aspect}, '768P', 'English', 'clip', 'rendering', ${tx.json(brief as any)})`;
+    const shotId = await begin(async (tx) => {
+      await tx`insert into projects (id, owner_id, title, format, aspect, resolution, language, mode, stage, brief, origin, api_key_id, webhook_url, api_metadata)
+        values (${id}, ${uid}, ${title}, 'clip', ${f.aspect}, '768P', 'English', 'clip', 'rendering', ${tx.json(brief as any)},
+                ${api ? 'api' : 'app'}, ${api?.keyId ?? null}, ${api?.webhookUrl ?? null}, ${api?.metadata ? tx.json(api.metadata as any) : null})`;
       const [ep] = await tx`insert into episodes (project_id, idx, label, title) values (${id}, 1, 'Clip', ${title}) returning id`;
       const [s] = await tx`insert into shots (project_id, episode_id, idx, code, duration, prompt, prompt_locked)
         values (${id}, ${ep.id}, 1, '1', ${seconds}, ${clipPrompt(brief)}, true) returning id`;
@@ -284,5 +310,8 @@ export async function refreshClip(projectId: string) {
   const why = latest?.status === 'failed'
     ? (latest.error_code === 'sensitive_content' ? 'This version was refused by the content check. You weren’t charged.' : 'This version failed to render. You weren’t charged.')
     : null;
+  const [was] = await sql`select stage from projects where id = ${projectId}`;
   await sql`update projects set stage = ${stage}, stage_error = ${busy ? null : why}, updated_at = now() where id = ${projectId}`;
+  // The clip just reached its final state: tell whoever is listening (the public API sends its webhook and sets the expiry).
+  if (!busy && was?.stage !== stage) await projectEvent({ projectId, stage: stage as 'done' | 'failed' });
 }

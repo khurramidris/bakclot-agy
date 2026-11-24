@@ -226,7 +226,7 @@ import handler  # noqa: E402
 try:
     out = handler.handler(job(engine_prompt, 1))
     assert out["key"] == "projects/p/takes/1.mp4" and out["has_audio"], out
-    assert (out["width"], out["height"]) == (96, 168) and abs(out["seconds"] - 124 / 24) < 0.1, out
+    assert (out["width"], out["height"]) == (96, 168) and abs(out["seconds"] - 5) < 0.1, out  # rendered 124 frames (5.17 s), cut to the 5 s ordered
     assert uploads["/put/1.mp4?sig=x"][4:8] == b"ftyp"
     [sent] = events("prompt")
     g = sent["graph"]

@@ -103,7 +103,9 @@ let m = await me(A);
 assert.equal(m.plan.active, false); assert.equal(m.balance_usd, 0); assert.equal(m.payments_enabled, true);
 const noPlan = await api(A, 'POST', '/v1/create', { prompt: 'A night nurse finds a letter that changes everything.' }, [402]);
 assert.equal(noPlan.error.code, 'subscription_required');
-assert.equal((await api(A, 'POST', '/v1/billing/topup', { pack: 'starter' }, [402])).error.code, 'subscription_required', 'top-ups are for subscribers');
+// Top-up credit needs no plan (it pays for the API), but it never lets anyone create in the app without one.
+const topup = await api(A, 'POST', '/v1/billing/topup', { pack: 'starter' });
+assert.match(topup.url, /^https:\/\/shop\.test\/checkout\//, 'top-ups are open to everyone');
 await api(A, 'GET', '/v1/billing/portal', undefined, [404]);
 await api(A, 'GET', '/v1/admin/preflight', undefined, [404]); // the setup check is for admins only
 const co = await api(A, 'POST', '/v1/billing/subscribe', {});
@@ -112,7 +114,7 @@ const sent = checkouts.at(-1).data;
 assert.equal(sent.attributes.checkout_data.custom.user_id, A, 'the owner rides along to the webhook');
 assert.equal(sent.relationships.variant.data.id, '100'); assert.equal(sent.relationships.store.data.id, '1');
 assert.equal(sent.attributes.product_options.redirect_url, 'https://app.test/billing?paid=1');
-log('  ✓ creating without a plan is refused (402); subscribe opens a hosted checkout for this user');
+log('  ✓ creating without a plan is refused (402); top-ups need no plan; subscribe opens a hosted checkout for this user');
 
 log('\n2. Subscribe (Lemon Squeezy webhooks)');
 const created = lsEvent('subscription_created', A, 'subscriptions', 501, { status: 'active', variant_id: 100, customer_id: 9501, renews_at: future(30) });

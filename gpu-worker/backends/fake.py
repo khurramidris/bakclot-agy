@@ -6,7 +6,7 @@ import subprocess
 
 from . import Refused
 
-SHORT_SIDE = int(os.environ.get("FAKE_SHORT_SIDE", "432"))
+SHORT_SIDE = int(os.environ.get("FAKE_SHORT_SIDE", "768"))  # the real worker's 768P short side
 
 
 def load() -> None:

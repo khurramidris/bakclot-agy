@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
+  Braces,
   CreditCard,
   House,
   ListChecks,
@@ -19,12 +20,13 @@ import { engine, usd } from "@/lib/engine";
 import { cn } from "@/lib/utils";
 
 const NAV: {
-  to: "/dashboard" | "/billing" | "/account" | "/setup" | "/admin";
+  to: "/dashboard" | "/billing" | "/developers" | "/account" | "/setup" | "/admin";
   label: string;
   icon: LucideIcon;
 }[] = [
   { to: "/dashboard", label: "Home", icon: House },
   { to: "/billing", label: "Billing", icon: CreditCard },
+  { to: "/developers", label: "Developers", icon: Braces },
   { to: "/account", label: "Account", icon: UserRound },
 ];
 

@@ -169,7 +169,7 @@ export async function downloadTo(key: string, url: string) {
     await storage.put(key, buf, mimeOf(key));
     return buf.length;
   }
-  const r = await fetch(url);
+  const r = await fetch(url, { signal: AbortSignal.timeout(300_000) });
   if (!r.ok) throw new Error(`download failed ${r.status} for ${url.slice(0, 120)}`);
   const buf = Buffer.from(await r.arrayBuffer());
   await storage.put(key, buf, r.headers.get('content-type') || mimeOf(key));

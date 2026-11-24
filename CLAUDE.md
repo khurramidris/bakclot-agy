@@ -7,7 +7,9 @@ The founder works with Claude as CTO and the whole engineering team. Ship-orient
 ## Current state
 The product is feature-complete for launch: prompt → film, quick clips, Basic subscription ($20/month through Lemon
 Squeezy, monthly plan credit plus top-ups), 10 GB of storage per customer (kept until they delete it), content checks, billing and account pages, the
-company dashboard on `/admin`, password reset, and Terms/Privacy drafts. The launch audit and go/no-go list are in
+company dashboard on `/admin`, password reset, Terms/Privacy drafts, GPU autoscaling on RunPod, and the public
+developer API for clips and films (`/api/v1`, the Developers page, `/docs/api`; off until `API_ENABLED=1`). The launch
+audit (November 2026: the load freeze, free and flat-fee work, hostile uploads) and the go/no-go list are in
 `docs/LAUNCH.md`. What's left is setting up accounts and inputs only the founder can provide (see "Not done yet").
 Launch good enough, then fix what customers actually hit: don't polish ahead of real use.
 
@@ -21,7 +23,11 @@ Launch good enough, then fix what customers actually hit: don't polish ahead of 
 
 ## Layout
 - `engine/`: Node 22 + Hono + Postgres. Entry: `src/index.ts`; routes: `src/server.ts`; pipeline:
-  `src/pipeline/*`; money: `src/billing.ts` (credit buckets, plan gate, storage quota) and `src/lemonsqueezy.ts` (payments); RunPod: `src/providers/runpod.ts`, `src/capacity.ts`.
+  `src/pipeline/*`; money: `src/billing.ts` (credit buckets, plan gate, storage quota) and `src/lemonsqueezy.ts` (payments); RunPod: `src/providers/runpod.ts`, `src/capacity.ts` (the GPU autoscaler).
+  Job queue with lanes and per-customer fairness: `src/queue.ts`, `src/jobs.ts`; hourly cleanup: `src/maintenance.ts`; project
+  events (webhooks, auto-approval hooks): `src/events.ts`. Database safety (`begin()` timeouts, `retryBusy`, the watchdog):
+  `src/db.ts`; inside a transaction always query through its `tx`. Upload hardening: `src/media/ffmpeg.ts`.
+  The public API: `src/api/*` (`docs/API.md`).
   Quick clips: `src/pipeline/clips.ts`; content checks: `src/moderation.ts`; the company dashboard: `src/business.ts`
   (web: `src/components/admin/CompanyDashboard.tsx`).
   Migrations in `db/migrations` (applied on boot, append-only). The story engine (pitch → choose → bible → scene cards
@@ -50,9 +56,12 @@ npm run setup
 npm --prefix engine run typecheck && npm --prefix engine test           # fast
 npm --prefix web run typecheck && npm --prefix web run lint && npm --prefix web test && npm --prefix web run build
 # end to end (each needs its own EMPTY database; mock providers, real FFmpeg):
-DATABASE_URL=postgres://postgres@localhost:5432/<db> npm --prefix engine run e2e          # step-by-step pipeline
-DATABASE_URL=postgres://postgres@localhost:5432/<db> npm --prefix engine run e2e:vibe     # prompt → paid film
-DATABASE_URL=postgres://postgres@localhost:5432/<db> npm --prefix engine run e2e:runpod   # RunPod path + scaling
+DATABASE_URL=postgres://postgres@localhost:5432/<db> npm --prefix engine run e2e              # step-by-step pipeline
+DATABASE_URL=postgres://postgres@localhost:5432/<db> npm --prefix engine run e2e:vibe         # prompt → paid film
+DATABASE_URL=postgres://postgres@localhost:5432/<db> npm --prefix engine run e2e:runpod       # RunPod path + scaling
+DATABASE_URL=postgres://postgres@localhost:5432/<db> npm --prefix engine run e2e:reliability  # restarts, outages
+DATABASE_URL=postgres://postgres@localhost:5432/<db> npm --prefix engine run e2e:scale        # load, freeze, lanes
+DATABASE_URL=postgres://postgres@localhost:5432/<db> npm --prefix engine run e2e:api          # the public API
 python gpu-worker/selftest.py && python gpu-worker/test_h3.py
 ```
 
@@ -76,5 +85,7 @@ FFmpeg and an automatic cloudflared tunnel for RunPod. See `docs/DESKTOP.md`; ch
   against a fake ComfyUI only: GPU fit, speed, cost per clip and quality are unmeasured.
 - Production accounts (Supabase, Railway, MiniMax, Lemon Squeezy): the founder follows `docs/BETA.md`. Admins see
   a live Setup check at `/setup` (`engine/src/preflight.ts`, also `npm --prefix engine run preflight`).
-- The legal entity details in `web/src/lib/legal.ts`, and a lawyer's review of `/terms` and `/privacy`.
-- The public developer API (pay-as-you-go keys, `/api/v1`, webhooks): planned in `docs/API.md`, not built yet.
+- The company details (`LEGAL_COMPANY`, `LEGAL_JURISDICTION`, `LEGAL_ADDRESS`, `SUPPORT_EMAIL` on the engine), and a
+  lawyer's review of `/terms` and `/privacy`.
+- Switching the public API on (`API_ENABLED=1`) once a real film and clips have been made and their costs checked.
+- An outside uptime monitor on `/health`, and Railway's restart policy set to Always (`docs/DEPLOY.md` section 4).

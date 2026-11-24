@@ -36,8 +36,9 @@ function Terms() {
       <h2>3. The Basic plan, credits and payment</h2>
       <ul>
         <li>
-          Creating videos requires the Basic subscription. The current price, included credits and
-          storage are shown on the Billing page before you subscribe.
+          Creating videos in the studio requires the Basic subscription. The current price, included
+          credits and storage are shown on the Billing page before you subscribe. The API (section
+          11) needs credit but no subscription.
         </li>
         <li>
           Payments are handled by Lemon Squeezy, which acts as the reseller and Merchant of Record
@@ -50,8 +51,8 @@ function Terms() {
           next renewal and don't roll over.
         </li>
         <li>
-          Subscribers can buy top-up credit packs. Top-up credit doesn't expire while your account
-          exists, and it's used only after your monthly credits run out.
+          Anyone with an account can buy top-up credit packs. Top-up credit doesn't expire while
+          your account exists, and it's used only after your monthly credits run out.
         </li>
         <li>
           Credits pay for writing, casting and planning each video (a small setup fee) and for each
@@ -151,7 +152,40 @@ function Terms() {
         law, such as for fraud or for death or personal injury caused by negligence.
       </p>
 
-      <h2>11. Law and contact</h2>
+      <h2>11. The API</h2>
+      <p>
+        If you use the Backlot API (Backlot's programming interface for developers), these terms
+        apply to it too, and so does the following:
+      </p>
+      <ul>
+        <li>
+          You're responsible for everything made with your API keys, including requests your own
+          users send through your product. You must have the rights to every file you send,
+          including the permission of anyone shown or heard in it, and pass on these rules to your
+          users.
+        </li>
+        <li>
+          Keep your keys secret and on your server. Revoke a key at once if it may have leaked.
+        </li>
+        <li>
+          Videos and films made through the API are deleted 7 days after they finish (1 day after a
+          failure). Download what you want to keep. They don't count toward your plan's storage.
+        </li>
+        <li>
+          We log API requests (time, address, status and timing) for 30 days, for security, support
+          and billing.
+        </li>
+        <li>
+          The same content rules apply as in section 6. Repeated refused requests suspend API access
+          until we review it. We may also suspend keys that put the service at risk.
+        </li>
+        <li>
+          During the beta there is no uptime commitment. Prices are listed on the API pricing page;
+          changes take effect for new requests.
+        </li>
+      </ul>
+
+      <h2>12. Law and contact</h2>
       <p>
         These terms are governed by the laws of {LEGAL.jurisdiction}. If you're a consumer, you also
         keep any protections given to you by the law where you live. Questions: {LEGAL.email},{" "}

@@ -2,8 +2,8 @@
 
 | Folder | What | Stack |
 |---|---|---|
-| `web/` | The product UI: landing and pricing, sign-in and password reset, create, approve, watch, fix a shot, quick clips, billing, account, the company dashboard (admin), terms and privacy | React 19, Vite, TanStack Router + Query, Tailwind v4, shadcn/Radix |
-| `engine/` | API, durable job queue, AI pipeline, FFmpeg editing, credits, subscriptions (Lemon Squeezy), storage quota; serves `web/dist` | Node 22, Hono, Postgres (`postgres.js`), zod |
+| `web/` | The product UI: landing and pricing, sign-in and password reset, create, approve, watch, fix a shot, quick clips, billing, account, the Developers page and API guide, the company dashboard (admin), terms and privacy | React 19, Vite, TanStack Router + Query, Tailwind v4, shadcn/Radix |
+| `engine/` | The app's API (`/v1`), the public developer API (`/api/v1`), durable job queue, AI pipeline, FFmpeg editing, credits, subscriptions (Lemon Squeezy), storage quota, GPU autoscaling; serves `web/dist` | Node 22, Hono, Postgres (`postgres.js`), zod |
 | `gpu-worker/` | Renders one shot per job on RunPod Serverless | Python, RunPod SDK, FFmpeg, the H3 model |
 
 ## The flow
@@ -14,6 +14,10 @@ prompt ─▶ writing ─▶ casting ─▶ planning ─▶ READY (customer appr
             images/voices) H3 rules)                                                 ▲                          │
                                                                                      └────── fix this shot ◀────┘
 ```
+
+The same pipeline serves three doors: the web app (`/v1`, a signed-in session), quick clips (one shot, no story
+engine), and the public API (`/api/v1`, a `bk_live_` key), whose videos are clip projects and whose films are vibe
+projects marked `origin = 'api'`. Through the API a film is approved by itself within the developer's price cap.
 
 - **The story engine** (`docs/STORY-ENGINE.md` has the whole design). Every step is Claude through the official SDK,
   with structured outputs, adaptive thinking and an explicit effort; prompts in `pipeline/prompts.ts`, answer shapes in
@@ -61,7 +65,7 @@ prompt ─▶ writing ─▶ casting ─▶ planning ─▶ READY (customer appr
   - text to video
   - image to video: the picture is the first frame (`first_frame` role; MiniMax's `first_frame_image`, or
     `MiniMaxH3AddGuide` on our worker)
-  - characters & products: up to 4 pictures and a voice as references
+  - characters & products: up to 9 pictures and a voice as references
   - remix: a video to change ("replace the man with the woman in picture 1")
   Uploads are re-encoded by FFmpeg first (pictures to JPEG, video to 24 fps H.264 of at most 15 s, voice to 14 s
   MP3) and stored under `projects/<id>/inputs/`. The customer's "image 2" or "the voice" becomes the wording H3
@@ -78,6 +82,26 @@ prompt ─▶ writing ─▶ casting ─▶ planning ─▶ READY (customer appr
   worker died (a deploy, a crash) goes back in the queue after 3 minutes, or fails, running its refund hook, once
   it has used every attempt. On SIGTERM a process takes no new jobs, gives running ones 20 seconds to finish, then
   hands the rest straight back to the queue with their attempt returned.
+  - **Lanes:** each kind of job belongs to a lane with its own slots per process (`llm` writing and planning, `render`,
+    `assets` pictures and voices, `media` FFmpeg, `io` everything else; `config.lanes`, `WORKER_LANES`). A worker only
+    claims kinds whose lane has a free slot, so a burst of edits can't block writing and a burst of writing can't block
+    renders.
+  - **Fairness:** inside a lane, one customer may hold only a few slots (`FAIR_*_PER_CUSTOMER`); a job over its owner's
+    share steps aside for a few seconds (`fair()` in `jobs.ts`), so one big order can't make everyone else wait.
+  - **Housekeeping** (`maintenance.ts`): an hourly job removes finished jobs after 7 days and failed ones after 30,
+    replaced edits (keeping the two newest per episode), old failed cuts and content-check verdicts, and runs the
+    sweeps other modules register (`onCleanup`: the API's expiry and logs).
+- **Project events** (`events.ts`): the autopilot reports when a project reaches its price, finishes or fails
+  (`projectEvent`). Listeners (`onProjectEvent`) set API expiry dates and queue webhooks, and `mayAutoApprove` lets the
+  API approve a film within its cap. The pipeline doesn't know about the API.
+- **The public API** (`engine/src/api/`, reference `docs/API.md`): key auth, idempotency, the request log, limits and
+  the price guard in front of the same `createClip()` and `createFilm()` the app uses. Media and webhook addresses go
+  through `net.ts`, which allows only public internet addresses, checks them as they're resolved and connects to the
+  address it checked. Webhooks are durable jobs with a retry schedule.
+- **The database under load** (`db.ts`): every transaction goes through `begin()`, which sets a lock timeout and an
+  idle-in-transaction timeout, so a stuck request gives up instead of holding the pool. Lock conflicts are retried
+  (`retryBusy`). `/health` answers `503` within 5 seconds when the pool can't get a connection, and a watchdog exits
+  the process (to be restarted) when the pool stops answering while the database itself still does.
 - **Money:**
   - `engine/src/billing.ts`: two credit buckets on `credit_accounts`. `plan_usd` is the monthly plan credit,
     reset at each paid invoice. `balance_usd` holds top-ups and refunds, which never expire. Plan credit is
@@ -93,11 +117,15 @@ prompt ─▶ writing ─▶ casting ─▶ planning ─▶ READY (customer appr
 - **Video providers:** `providers/runpod.ts` (ours) or `providers/minimax.ts` (hosted), same interface,
   chosen by `VIDEO_PROVIDER`.
   - With RunPod, the worker uploads each clip straight to our storage through a signed link.
-  - `engine/src/capacity.ts` sets the GPU floor: 0 when idle, warm while active, deeper when busy, never above
-    the cap. It counts only clips that can run now, so a film's clips waiting their turn keep no GPU warm.
-- **Rendering** (`pipeline/render.ts`): a project's clips render in story order, up to 4 at a time per
-  customer across all their videos (`MAX_ACTIVE_RENDERS_PER_USER`, `RENDERS_PER_PROJECT`), and the next starts as soon
-  as one finishes. A slot is claimed under a Postgres advisory lock, so the limit holds with many workers. The customer plays each finished clip on
+  - `engine/src/capacity.ts` is the GPU autoscaler (on by default with RunPod): every 30 seconds, and at once when
+    work is queued (`kickCapacity`), it sets the endpoint's floor to one GPU per `RUNPOD_JOBS_PER_WORKER` renders that
+    can run now (0 when idle, `RUNPOD_WARM_WORKERS` while active) and its ceiling to `RUNPOD_MAX_WORKERS`. It counts
+    only clips that can run now, so a film's clips waiting their turn keep no GPU warm. Renders in flight are capped
+    at the ceiling × jobs per worker (`VIDEO_MAX_INFLIGHT` overrides). `capacitySnapshot()` feeds the dashboards,
+    including GPUs needed beyond the ceiling.
+- **Rendering** (`pipeline/render.ts`): a project's clips start strictly in story order (a clip never starts while
+  an earlier one is still waiting), up to 4 at a time per customer across all their videos
+  (`MAX_ACTIVE_RENDERS_PER_USER`, `RENDERS_PER_PROJECT`), and the next starts as soon as one finishes. A slot is claimed under a Postgres advisory lock, so the limit holds with many workers. The customer plays each finished clip on
   the project page while the rest are filmed. The previous clip is not sent along as a reference video
   (`CHAIN_CLIPS`, off): its seconds would be billed as input on every render.
 - **Editing** (`pipeline/assemble.ts`): the clips are joined whole, in order, at one size, frame rate and audio
@@ -106,10 +134,16 @@ prompt ─▶ writing ─▶ casting ─▶ planning ─▶ READY (customer appr
 - **Auth:** Supabase Auth in the browser. The engine verifies the session token on every `/v1` request. All
   product data lives in the engine's tables; Supabase only knows about users.
 
+- **Uploads** (`media/ffmpeg.ts`): a file is recognised by its first bytes (`sniff`), never its name. FFmpeg opens it
+  with an allow-list of demuxers for that kind and only local protocols (`-protocol_whitelist file,crypto,data`,
+  `safeInput`), so a disguised playlist can't reach the network or other files; pictures over 50 megapixels are refused from their header before decoding.
+  Decoding runs at most `MEDIA_SLOTS` at a time per process (`withMediaSlot`); past `MEDIA_QUEUE` waiting, callers
+  get a `503` to retry. Large request bodies are gated per process (`MAX_PARALLEL_UPLOADS`).
 - **Operations:** `engine/src/admin.ts` (the admin console API), `engine/src/business.ts` (the company dashboard:
-  revenue, costs and profit, customers, what was made, health and problems for a date range),
+  revenue, costs and profit, customers, what was made, health, capacity, the API and problems for a date range),
   `engine/src/preflight.ts` (Setup check),
-  `engine/src/ratelimit.ts` (per-customer limits) and `engine/src/monitoring.ts` (Sentry, optional).
+  `engine/src/ratelimit.ts` (per-customer limits) and `engine/src/monitoring.ts` (Sentry, optional). Every response
+  carries security headers and a content security policy (`server.ts`); what a job cost us is shown to admins only.
 
 ## Invariants worth keeping
 
@@ -134,3 +168,10 @@ prompt ─▶ writing ─▶ casting ─▶ planning ─▶ READY (customer appr
   files before a model sees them.
 - What a customer writes or uploads for a video passes the content check before it reaches a video model, unless
   Claude rewrote it first.
+- Inside a transaction, every query uses that transaction (`tx`), never the pool: a transaction that waits for a
+  second pool connection while holding locks can freeze the engine (the November audit's freeze). Every transaction
+  goes through `begin()`.
+- Paid work is priced by its size (per second, per scene, per minute of story): nothing large rides on a flat fee.
+- The API never sells video below what it costs us (`priceGuard`), and API work (`origin = 'api'`) is kept out of the
+  app's lists and storage allowance and deleted after its retention period.
+- Media and webhook addresses from developers are fetched only through `net.ts`, never with a plain `fetch`.

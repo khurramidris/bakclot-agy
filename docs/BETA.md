@@ -27,9 +27,11 @@ left is creating accounts, pasting keys into one place (Railway), and checking i
 | 6 | Railway (runs the site) | you | 20 min |
 | 7 | Make yourself admin | you | 5 min |
 | 8 | Setup check page all green | you, then me for anything odd | 10 min |
-| 9 | Your own test film, and look at the costs | you | 30 min |
-| 10 | Legal details on the Terms and Privacy pages | you send me 4 details | 5 min |
+| 9 | Your own test film and clip, and look at the costs | you | 30 min |
+| 10 | Company details on the Terms and Privacy pages (4 settings) | you | 5 min |
+| 10c | An uptime monitor that tells you if the site goes down | you | 10 min |
 | 11 | Invite testers | you | — |
+| 11b | Open the developer API (`API_ENABLED=1`) once the costs check out | you | 10 min |
 | 12 | Last: video on your own GPU (`docs/SELF-HOSTED-H3.md`), then `VIDEO_PROVIDER=runpod` | you, then me | 1–2 h |
 
 Keep a private note open as you go (not in the repo, never in chat logs you share). Each step gives you a
@@ -54,6 +56,8 @@ value to paste into Railway in step 6. The name in `CAPITALS` is the setting's n
    - Save as `MINIMAX_API_KEY`.
    - If your account is on the China site (minimaxi.com), also save `MINIMAX_BASE_URL=https://api.minimaxi.com`.
 4. Also save `VIDEO_PROVIDER=minimax`.
+5. Backlot sends MiniMax up to 10 videos at once. If MiniMax limits your account to fewer videos in progress at once
+   (check the rate limits for your account), save that number as `VIDEO_MAX_INFLIGHT`.
 
 ## 3. Supabase (sign-in and the database)
 1. Go to **supabase.com** → **New project**.
@@ -145,6 +149,9 @@ Supabase's built-in email only sends a few messages an hour, so testers would ge
    with them.
 5. Railway redeploys by itself. When it's done, open `https://<your-railway-address>/health`. It should say
    `{"ok":true,"mock":false}`.
+6. Open the service → **Settings → Deploy**: check that **Healthcheck Path** says `/health`, and set **Restart Policy**
+   to **Always**. (It needs Railway's Hobby plan, $5 a month; on the free trial leave it on "On Failure".) If the site
+   ever gets stuck, it restarts itself, and this makes sure Railway always starts it again.
 
 ## 7. Make yourself admin
 1. Open your site, **Get started**, and sign up with your own email. Confirm it from the email.
@@ -165,18 +172,22 @@ Supabase's built-in email only sends a few messages an hour, so testers would ge
    approval" with the script, cast and price.
 3. Press **Make my video** and wait for "Finished". Play it and download it.
 4. Try **Fix this shot** on one shot, **Buy** a top-up pack (test card again), and **Forgot password**.
-5. **Look at the costs:** open **Admin**. "Where the money goes" shows what that film cost you in writing,
+5. On **Home**, switch to **Quick clip**, type one sentence and make a 5-second clip. Then one from a picture.
+6. **Look at the costs:** open **Admin**. "Where the money goes" shows what that film cost you in writing,
    pictures, voices and video, next to what you charged. Check the Anthropic console and the MiniMax balance
    too, since the dashboard's figures are estimates from list prices. Tell me the numbers and I'll check the
    pricing still makes money.
 
-## 10. Legal details and a domain
-1. Send me:
-   - your company's legal name
-   - the country or state it's registered in
-   - its address
-   - a support email
-   I'll put them into the Terms and Privacy pages.
+## 10. Company details and a domain
+1. In Railway → Variables, add your company's details. The Terms, the Privacy Policy and the support links show them
+   (no code change: the site picks them up when it restarts):
+   ```
+   LEGAL_COMPANY=<your company's legal name>
+   LEGAL_JURISDICTION=<the country or state it's registered in>
+   LEGAL_ADDRESS=<its registered address>
+   SUPPORT_EMAIL=<a support email you read>
+   ```
+   Until they're set, the pages show placeholders and the Setup check shows them in red.
    A lawyer's review can wait for a small invite-only beta. Do it before you take real money.
 2. **Domain (optional for beta):** buy one (e.g. at Cloudflare or Namecheap). In Railway → Settings →
    Networking → Custom Domain, add it and follow the DNS instructions. Then:
@@ -190,6 +201,13 @@ So you hear about problems before testers tell you:
 2. Create a project and choose **Node.js**. Copy the **DSN** (a long address that starts with `https://`).
 3. In Railway → Variables, add `SENTRY_DSN=<the DSN>`.
 From then on, Sentry emails you when something breaks, such as a render that fails for good or a server error.
+
+## 10c. Uptime monitor (10 minutes, recommended)
+Railway doesn't tell you when the site stops answering. A free monitor does:
+1. Go to **uptimerobot.com** (or betterstack.com) and sign up. The free plan is enough.
+2. **New monitor**: type **HTTP(s)**, URL `https://<your-address>/health`, every 5 minutes.
+3. Alerts: your email, and the phone app if you want a push.
+It warns you if the site is down or the database stops answering (the health page then says so).
 
 ## 11. Invite testers
 Send each tester:
@@ -210,9 +228,22 @@ can also **give or take back credit** there with a note, for example if a film c
 
 Also keep an eye on the MiniMax balance, and send me anything that looks wrong.
 
+## 11b. Open the developer API (when the costs check out)
+The API lets other companies make clips and microdramas from their own code, paying from prepaid credit (no plan
+needed). It's built and tested, and stays off until you switch it on.
+1. Make sure step 9's costs make sense: a second of video costs you less than you charge, and writing a film costs
+   less than the setup fee.
+2. In Railway → Variables, add `API_ENABLED=1`. It redeploys.
+3. Open **Developers** in the sidebar, create a key with a $5 monthly limit, and follow the quick start on
+   `https://<your-address>/docs/api` with it. The clip should arrive and your balance drop by its price.
+4. Revoke that key. Point developers at `/docs/api`; the Admin page shows their use under API, and a developer whose
+   requests are refused by the content check too often is suspended automatically (you can lift it on their
+   customer page).
+
 ## Going live with real payments (later)
-1. **Lemon Squeezy:** activate the store (they verify your identity, which can take a few days), then switch Test
-   mode **off**.
+1. **Lemon Squeezy:** activate the store (they verify your identity and what you sell, which can take a few days: apply
+   early, and describe Backlot plainly as AI video generation for creators and businesses). Then switch Test mode
+   **off**. If they ask you to move to Stripe Managed Payments instead, tell me before you do: billing needs changing.
 2. Live mode has its own API key, products and webhook. Repeat step 5 in live mode and replace the five
    `LEMONSQUEEZY_*` / `CREDIT_PACKS` values in Railway.
 3. Get the lawyer's review of Terms and Privacy done first.

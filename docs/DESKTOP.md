@@ -30,6 +30,10 @@ kept in the app's data folder. The address changes every start, which is fine be
 it. If you already have your own https address that reaches this computer, put it in **Public address** and no tunnel
 is started. With MiniMax-hosted video or demo mode no tunnel is needed.
 
+The tunnel forwards every address, and the studio signs you in by itself, so the engine answers only this computer:
+a request arriving through the tunnel (or any request not addressed to `127.0.0.1`/`localhost`) can reach only the
+signed file links under `/files/`, `/health` and the signed payment webhook. Everything else gets 403.
+
 If renders fail with a download or upload error, use **Tools → Restart studio** to get a fresh address, and
 **Tools → Setup check** to see what the engine can reach.
 

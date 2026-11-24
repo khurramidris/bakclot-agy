@@ -35,6 +35,12 @@ jobs:
         run: createdb vibe && DATABASE_URL=postgres://postgres@localhost:5432/vibe PORT=8802 npx tsx test/vibe.e2e.ts
       - name: Video on RunPod (fake endpoint), scaling, cancel
         run: createdb runpod && DATABASE_URL=postgres://postgres@localhost:5432/runpod PORT=8803 npx tsx test/runpod.e2e.ts
+      - name: Money, recovery and safety (audit 2026-11-13)
+        run: createdb reliability && DATABASE_URL=postgres://postgres@localhost:5432/reliability npx tsx test/reliability.e2e.ts
+      - name: Load, hostile uploads, limits and job lanes (launch audit)
+        run: createdb scale && DATABASE_URL=postgres://postgres@localhost:5432/scale npx tsx test/scale.e2e.ts
+      - name: Public API (keys, videos, microdramas, webhooks, limits, expiry)
+        run: createdb api && DATABASE_URL=postgres://postgres@localhost:5432/api PORT=8805 npx tsx test/api.e2e.ts
 
   web:
     runs-on: ubuntu-latest

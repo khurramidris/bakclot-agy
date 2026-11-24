@@ -98,10 +98,16 @@ If you see an error instead, look it up under **If something goes wrong** below.
 - **Your GPU cost per second:** `0.00031` (the 4090 price), so the Admin page shows what each film cost you.
 
 **Running from the repository** (`docs/LOCAL.md`): in `engine/.env.local` set `VIDEO_PROVIDER=runpod`, `RUNPOD_API_KEY`,
-`RUNPOD_ENDPOINT_ID`, `RUNPOD_GPU_PRICE_PER_SECOND=0.00031` (the 4090 price) and `VIDEO_MAX_INFLIGHT=1`.
+`RUNPOD_ENDPOINT_ID`, `RUNPOD_GPU_PRICE_PER_SECOND=0.00031` (the 4090 price), `RUNPOD_MAX_WORKERS=1` and
+`VIDEO_MAX_INFLIGHT=1`.
 
-**On the website** (Railway, `docs/BETA.md`): the same `RUNPOD_*` settings plus `VIDEO_PROVIDER=runpod`, in Railway's
+**On the website** (Railway, `docs/BETA.md`): the same settings plus `VIDEO_PROVIDER=runpod`, in Railway's
 **Variables**.
+
+From now on Backlot manages the endpoint's **Active workers** and **Max workers** itself (GPU autoscaling, on by default
+with RunPod): it raises the active workers as soon as a shot is waiting and sets them back to 0 about 15 minutes after
+the last one, so you don't need to touch them in the console. **Max workers** follows `RUNPOD_MAX_WORKERS`, which is
+why it's 1 for the trial: without it, Backlot would allow 5. (`RUNPOD_MANAGE_SCALING=0` hands both back to the console.)
 
 ## Step 6. Make a first film
 
@@ -117,6 +123,18 @@ cast, and press **Make my video**.
 What to judge, shot by shot: does each character look like their picture, keep their clothes, and stay in the set?
 Is the dialogue the right words, in the right voice, on the right lips? Hands and motion? Write down what fails. Then
 we tune the settings below, or the prompts.
+
+## After the trial: scaling up for customers
+
+Once shots look right and you know the cost per clip:
+1. In Railway's **Variables**, remove `VIDEO_MAX_INFLIGHT` and set `RUNPOD_MAX_WORKERS` to the most GPUs you're willing
+   to pay for at once (5 is a good start). Renders sent at once follow it (2 per GPU: one filming, one waiting).
+2. In RunPod, ask for a higher worker quota if your account's limit is below that number.
+3. Set `RUNPOD_GPU_PRICE_PER_SECOND` to what you actually pay: the Admin page's margins and the API's price guard use it.
+
+Backlot then adds GPUs as work queues up and lets them go when it's quiet: no GPU runs (or is billed) overnight unless
+someone is making something. The Admin page shows the GPUs needed against the ceiling and says when to raise
+`RUNPOD_MAX_WORKERS`. The full list of scaling settings is in `docs/DEPLOY.md` ("GPU autoscaling").
 
 ## Optional settings (endpoint environment variables)
 

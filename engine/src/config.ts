@@ -11,6 +11,9 @@ const devMode = bool(env.MOCK_PROVIDERS) || bool(env.ALLOW_DEV_TOKENS);
 // Dev sign-in lets anyone act as any user, and mocks fake every render: neither may reach production.
 if (production && devMode) throw new Error('MOCK_PROVIDERS and ALLOW_DEV_TOKENS are for local development only and must be unset when NODE_ENV=production.');
 
+// Letting API media or webhook URLs point at private addresses is how tests reach a local server. Never in production.
+if (production && bool(env.API_ALLOW_PRIVATE_URLS)) throw new Error('API_ALLOW_PRIVATE_URLS is for local development and tests only and must be unset when NODE_ENV=production.');
+
 // Signed file links are the only thing protecting local-storage files, so a guessable default is never allowed outside dev.
 if (!env.FILE_SIGNING_SECRET && !devMode) throw new Error('FILE_SIGNING_SECRET is required (a long random string). Only MOCK_PROVIDERS/ALLOW_DEV_TOKENS runs may omit it.');
 
@@ -27,7 +30,23 @@ export const config = {
   databaseUrl: env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/studio',
   autoMigrate: bool(env.AUTO_MIGRATE, true),
   runWorker: bool(env.RUN_WORKER, true),           // run the job worker inside the API process
-  workerConcurrency: num(env.WORKER_CONCURRENCY, 4), // non-video jobs in parallel per process
+  // Background work runs in lanes, each with its own slots per process, so one kind never starves another:
+  //   llm     writing, breakdown, planning (long Claude turns; mostly waiting, so raise it freely) = WORKER_CONCURRENCY
+  //   render  sending clips to the video service and collecting them (quick)
+  //   assets  cast, set and voice generation
+  //   media   editing with FFmpeg (uses a whole CPU core each)
+  //   io      webhooks and housekeeping
+  // WORKER_LANES overrides any of them, e.g. "llm:12,render:16,media:4".
+  lanes: { llm: Math.max(1, num(env.WORKER_CONCURRENCY, 6)), render: 8, assets: 4, media: 2, io: 4,
+    ...Object.fromEntries(Object.entries(pairs(env.WORKER_LANES || '')).map(([k, v]) => [k, Math.max(1, Number(v) || 1)])) } as Record<string, number>,
+  // Fairness between customers: how many jobs of one customer may run at once in a lane (the rest step aside briefly).
+  fairness: { llm: Math.max(1, num(env.FAIR_LLM_PER_CUSTOMER, 3)), assets: Math.max(1, num(env.FAIR_ASSETS_PER_CUSTOMER, 2)), media: Math.max(1, num(env.FAIR_EDITS_PER_CUSTOMER, 1)) },
+  db: {
+    poolMax: Math.max(4, num(env.DB_POOL_MAX, 10)),          // database connections per process
+    lockTimeoutMs: num(env.DB_LOCK_TIMEOUT_MS, 15_000),      // a transaction waiting on a lock gives up after this
+    idleTxTimeoutMs: num(env.DB_IDLE_TX_TIMEOUT_MS, 60_000), // Postgres ends a transaction that goes silent this long
+    watchdog: bool(env.DB_WATCHDOG, true),                   // exit (to be restarted) if the pool stops answering
+  },
   corsOrigins: (env.CORS_ORIGINS || '*').split(',').map((s) => s.trim()).filter(Boolean),
 
   auth: {
@@ -98,7 +117,11 @@ export const config = {
     videoModel: env.MINIMAX_VIDEO_MODEL || 'MiniMax-H3',
     imageModel: env.MINIMAX_IMAGE_MODEL || 'image-01',
     // Renders in flight at the provider at once (RunPod: roughly max workers × 2, so its queue stays short).
-    maxConcurrentVideo: num(env.VIDEO_MAX_INFLIGHT, num(env.MINIMAX_MAX_CONCURRENT, 10)),
+    // On our own GPUs it follows the worker ceiling (RunPod's autoscaler can only add GPUs for work it can see waiting),
+    // so raising RUNPOD_MAX_WORKERS is the one setting to change as demand grows.
+    maxConcurrentVideo: num(env.VIDEO_MAX_INFLIGHT, (env.VIDEO_PROVIDER || 'minimax') === 'runpod'
+      ? Math.max(1, num(env.RUNPOD_MAX_WORKERS, 5) * Math.max(1, num(env.RUNPOD_JOBS_PER_WORKER, 2)))
+      : num(env.MINIMAX_MAX_CONCURRENT, 10)),
     // Clips one customer renders at once, across all their films and quick clips, whatever their length.
     maxConcurrentPerUser: Math.max(1, num(env.MAX_ACTIVE_RENDERS_PER_USER, 4)),
     // Clips of one project render this many at a time, in story order, so the customer watches them arrive in the
@@ -128,6 +151,40 @@ export const config = {
   // Customer prompts and uploads are checked before they reach a video model (our own H3 has no filter of its own).
   moderation: bool(env.MODERATION, true),
 
+  // Screenplay limits: what one episode's script and one imported project may hold, so the AI work behind any one
+  // request stays bounded (an episode of a few minutes is 3,000 to 8,000 characters).
+  scripts: {
+    maxEpisodeChars: num(env.MAX_SCRIPT_CHARS, 40_000),
+    maxEpisodeScenes: num(env.MAX_EPISODE_SCENES, 80),
+    maxImportEpisodes: num(env.MAX_IMPORT_EPISODES, 120),
+  },
+  // Importing a ready-made screenplay (POST /v1/projects). The web app doesn't offer it; off in production unless asked for.
+  importEnabled: bool(env.IMPORT_ENABLED, !production),
+
+  // The public developer API (/api/v1): pay-as-you-go keys for clips and microdramas. Off until API_ENABLED=1.
+  api: {
+    enabled: bool(env.API_ENABLED, false),
+    retentionDays: num(env.API_RETENTION_DAYS, 7),               // API videos are deleted this long after they finish
+    failedRetentionDays: num(env.API_FAILED_RETENTION_DAYS, 1),  // …and this long after a failure
+    requestsPerMinute: num(env.API_REQUESTS_PER_MINUTE, 300),    // per key
+    createsPerMinute: num(env.API_CREATES_PER_MINUTE, 30),       // new videos and films per account
+    maxActive: num(env.API_MAX_ACTIVE_PER_ACCOUNT, 20),          // clips queued or rendering per account
+    maxActiveFilms: num(env.API_MAX_ACTIVE_FILMS, 3),            // films being made per account
+    filmMaxSeconds: num(env.API_FILM_MAX_SECONDS, 900),          // the longest film one request may ask for
+    refusalsBeforeSuspend: num(env.API_REFUSALS_BEFORE_SUSPEND, 5), // content refusals in 24 h before API access is suspended
+    webhookTimeoutSec: num(env.API_WEBHOOK_TIMEOUT_SEC, 10),
+    maxKeys: num(env.API_MAX_KEYS, 10),                          // active keys per account
+    logDays: num(env.API_LOG_DAYS, 30),                          // how long the request log is kept
+    // Local development and tests only (refused in production): media and webhook URLs may point at this machine.
+    allowPrivateUrls: bool(env.API_ALLOW_PRIVATE_URLS, false),
+  },
+
+  // Who runs the service: shown in the Terms, the Privacy Policy and wherever the app says "contact support".
+  legal: {
+    company: env.LEGAL_COMPANY || '', jurisdiction: env.LEGAL_JURISDICTION || '', address: env.LEGAL_ADDRESS || '',
+    email: env.SUPPORT_EMAIL || '', updated: env.LEGAL_UPDATED || '14 November 2026',
+  },
+
   // The company dashboard: monthly fixed costs ("Railway:20,Supabase:25") and the payment processor's fee per payment.
   business: {
     fixedCosts: (env.FIXED_COSTS_MONTHLY || '').split(',').map((x) => x.split(':').map((s) => s.trim())).filter(([n, v]) => n && +v > 0)
@@ -144,12 +201,13 @@ export const config = {
     executionTimeoutSec: num(env.RUNPOD_EXECUTION_TIMEOUT_SEC, 1800),
     gpuPricePerSecond: num(env.RUNPOD_GPU_PRICE_PER_SECOND, 0), // what one worker-second costs us, for margin reports
     // Warm-pool controller: keep GPUs warm while customers are active, scale to zero when idle.
-    manageScaling: bool(env.RUNPOD_MANAGE_SCALING, false),
+    // On by default whenever our own GPUs render: the controller pre-warms GPUs for the work waiting and lets them go when idle.
+    manageScaling: bool(env.RUNPOD_MANAGE_SCALING, (env.VIDEO_PROVIDER || '') === 'runpod' || (env.CLIP_IMAGE_PROVIDER || '') === 'runpod'),
     warmWorkers: num(env.RUNPOD_WARM_WORKERS, 1),
     warmMinutes: num(env.RUNPOD_WARM_MINUTES, 15),
     maxWorkers: num(env.RUNPOD_MAX_WORKERS, 5),
     jobsPerWorker: num(env.RUNPOD_JOBS_PER_WORKER, 2),
-    tickSeconds: num(env.RUNPOD_CAPACITY_TICK_SECONDS, 60),
+    tickSeconds: num(env.RUNPOD_CAPACITY_TICK_SECONDS, 30),
   },
 
   // Error alerts (optional): a Sentry project's DSN. Server errors and failed jobs are reported there.
@@ -171,6 +229,8 @@ export const config = {
   pricing: {
     videoPerSecond: { '768P': num(env.PRICE_768P, 0.08), '2K': num(env.PRICE_2K, 0.13), '480P': num(env.PRICE_480P, 0.04) } as Record<string, number>,
     imageEach: num(env.PRICE_IMAGE, 0.0035),
+    // MiniMax video: reference pictures sent with a request are free up to this many, then billed each.
+    freeInputImages: num(env.FREE_INPUT_IMAGES, 5), inputImageEach: num(env.PRICE_INPUT_IMAGE, 0.04),
     voicePerChar: num(env.PRICE_VOICE_CHAR, 30 / 1_000_000),
     retakeFactor: num(env.RETAKE_FACTOR, 1.8), // expected takes per approved shot, for estimates
   },
@@ -196,6 +256,10 @@ export const config = {
       pitch: num(env.SELL_PITCH_USD, 0.25),          // three new takes on the idea (step-by-step projects)
       scene: num(env.SELL_SCENE_USD, 0.1),           // rewriting one scene of the screenplay from a note
     },
+    // Long scripts are more work. Past the scenes each fee includes, every extra scene adds a little, so a redo of a
+    // long script is never sold below what it costs to make.
+    breakdownIncludedScenes: num(env.BREAKDOWN_INCLUDED_SCENES, 20), breakdownPerSceneUsd: num(env.SELL_BREAKDOWN_SCENE_USD, 0.02),
+    planIncludedScenes: num(env.PLAN_INCLUDED_SCENES, 12), planPerSceneUsd: num(env.SELL_PLAN_SCENE_USD, 0.08),
     signupUsd: num(env.SIGNUP_CREDIT_USD, 0),        // free credit when a user's account is first created
     // Top-up packs for subscribers. They go into the balance that never expires.
     packs: packs(env.CREDIT_PACKS || 'starter:10,creator:50,studio:200'),
@@ -225,6 +289,10 @@ export const config = {
     // Optional cap on a project's total runtime, in seconds (0 = no cap: a whole series or a feature film is fine).
     maxRuntimeSeconds: num(env.MAX_RUNTIME_SECONDS, 0),
   },
+
+  // Customer uploads being decoded at once per process, and how many more may wait before callers are told to retry.
+  // …and large requests (uploads, API videos with media) being received at once per process: the rest are asked to retry.
+  media: { slots: Math.max(1, num(env.MEDIA_SLOTS, 3)), queue: Math.max(0, num(env.MEDIA_QUEUE, 24)), uploads: Math.max(1, num(env.MAX_PARALLEL_UPLOADS, 12)) },
 
   ffmpeg: { bin: env.FFMPEG_BIN || 'ffmpeg', probe: env.FFPROBE_BIN || 'ffprobe', font: env.SUBTITLE_FONT || 'DejaVu Sans',
     // Optional: a font file and folder shipped with the app (the desktop app uses these), for machines without fontconfig.

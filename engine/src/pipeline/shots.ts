@@ -2,7 +2,7 @@
 // Claude directs; code guarantees the script's dialogue is all there, verbatim and once,
 // that every line has time to be spoken, and that no shot breaks H3's limits.
 
-import { sql } from '../db.js';
+import { sql, begin } from '../db.js';
 import { PermanentError, type JobCtx } from '../queue.js';
 import { claudeJSON, llmCost, llmUnits } from '../providers/claude.js';
 import { config } from '../config.js';
@@ -12,7 +12,7 @@ import { SHOTS_SYSTEM, shotsPrompt, RETAKE_SYSTEM, retakePrompt, DIRECT_SYSTEM, 
 import { DirectionSchema, ShotsSchema, RetakeSchema, type Direction } from './schemas.js';
 import { exemplarsFor, sceneTags } from './exemplars.js';
 import { inParallel } from './story.js';
-import { compileShot, fitBeats, H3, speechSeconds, type Beat, type ShotPlan, type CompileAsset, type CompileInput } from './compiler.js';
+import { compileShot as compileStrict, PromptTooLong, fitBeats, H3, speechSeconds, type Beat, type ShotPlan, type CompileAsset, type CompileInput } from './compiler.js';
 
 const up = (s: any) => String(s || '').toUpperCase().trim();
 const norm = (s: string) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
@@ -152,6 +152,14 @@ export async function projectAssets(projectId: string) {
   const byId = new Map<string, any>(rows.map((r: any) => [r.id, r]));
   const byKey = new Map<string, any>(rows.map((r: any) => [`${r.kind}:${r.key}`, r]));
   return { rows, byId, byKey };
+}
+
+/** Compile for planning: a shot whose lines alone can't fit the prompt limit is kept with a warning, and refused at render. */
+function compileShot(i: CompileInput) {
+  try { return compileStrict(i); } catch (e) {
+    if (!(e instanceof PromptTooLong)) throw e;
+    return { prompt: '', images: [], voices: [], warnings: [e.message] };
+  }
 }
 
 /** Only approved assets are sent to H3; unapproved ones are treated as missing. */
@@ -302,7 +310,7 @@ export async function planEpisode(episodeId: string, ctx: JobCtx, o: { force?: b
   });
 
   const chain = config.minimax.chainClips && !!p.settings?.chain_clips;
-  const total = await sql.begin(async (tx) => {
+  const total = await begin(async (tx) => {
     await tx`delete from shots where episode_id = ${episodeId}`;
     let idx = 0;
     for (const { scene, shots, warnings } of planned) {

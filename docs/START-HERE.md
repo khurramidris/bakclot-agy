@@ -229,9 +229,20 @@ Do this before inviting anyone.
 
 ## Step 11. Legal pages
 
-Send me: your company's legal name, the country or state it's registered in, its address and a support email. I
-put them on the Terms and Privacy pages. A lawyer should read them before you take **real** money; that can wait
-for a small test.
+In **Railway** → **Variables**, add four lines with your company's details. The Terms and Privacy pages and the
+support links show them (Railway restarts; nothing else to do):
+```
+LEGAL_COMPANY=Your Company Ltd
+LEGAL_JURISDICTION=England and Wales
+LEGAL_ADDRESS=1 Example Street, London
+SUPPORT_EMAIL=support@yourdomain.com
+```
+Until they're in, the pages show placeholders and the Setup check shows them in red. A lawyer should read the pages
+before you take **real** money; that can wait for a small test.
+
+Also: in **Railway**, open the service, then **Settings**, then **Deploy**, and set **Restart Policy** to **Always**
+(on the $5 Hobby plan; on the free trial leave it). And sign up at **uptimerobot.com** (free) with a monitor on
+`https://ADDRESS/health`, so you get an email if the site ever stops answering.
 
 ## Step 12. Invite your testers
 

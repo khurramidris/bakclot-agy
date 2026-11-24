@@ -468,6 +468,15 @@ function AssetCard({ asset: a, projectId }: { asset: Asset; projectId: string })
           {KIND_LABEL[a.kind] ?? a.kind}
           {a.meta?.source === "upload" ? " · yours" : ""}
         </div>
+        {a.meta?.stale_parent ? (
+          <div className="text-[11px] text-destructive">
+            Made from an older picture of the person or place. Approve it again or change it.
+          </div>
+        ) : a.meta?.place_ref_missing ? (
+          <div className="text-[11px] text-muted-foreground">
+            Drawn from the description only, so it may not match the original place exactly.
+          </div>
+        ) : null}
         <Button
           size="sm"
           variant="ghost"

@@ -3,7 +3,7 @@
 // every step is the existing pipeline code. It reschedules itself with the queue's {again}
 // mechanism, so waiting costs nothing and a restart resumes where it left off.
 
-import { sql } from '../db.js';
+import { sql, begin } from '../db.js';
 import { PermanentError, enqueue, type Again, type JobCtx } from '../queue.js';
 import { credit } from '../billing.js';
 import { writeStep } from './writer.js';
@@ -11,7 +11,8 @@ import { runBreakdown } from './breakdown.js';
 import { queueAllAssets, approveAsset } from './assets.js';
 import { planEpisode } from './shots.js';
 import { queueRender, refreshEpisodeStatus } from './render.js';
-import { requestCut } from './assemble.js';
+import { queueCut } from './assemble.js';
+import { projectEvent, mayAutoApprove } from '../events.js';
 
 // Step-by-step projects (brief.review) also stop for the customer at story_review (pick a take), script_review (read and
 // edit the screenplay) and cast_review (check every face and set); "ready" (the price) is the last stop for everyone.
@@ -102,6 +103,9 @@ async function planning(p: any, st: any, ctx: JobCtx): Promise<any> {
     return again(0, `Planned episode ${next.idx} of ${eps.length}`);
   }
   await setStage(p.id, 'ready');
+  // A film made through the API may be allowed to start filming by itself (within its price cap); the app's wait here.
+  if (await mayAutoApprove({ ...p, stage: 'ready' })) return again(0, 'Approved automatically');
+  await projectEvent({ projectId: p.id, stage: 'ready' });
   return { stage: 'ready' };
 }
 
@@ -113,6 +117,7 @@ async function rendering(p: any, st: any): Promise<any> {
       try { await queueRender(s.id); } catch (e: any) {
         if (e instanceof PermanentError && e.code === 'insufficient_credit') { // pause at the checkpoint instead of failing
           await sql`update projects set stage = 'ready', stage_error = ${e.message}, updated_at = now() where id = ${p.id}`;
+          await projectEvent({ projectId: p.id, stage: 'ready' });
           return { paused: 'insufficient_credit' };
         }
         throw e;
@@ -157,8 +162,7 @@ async function assembling(p: any, st: any): Promise<any> {
       from episodes e left join shots s on s.episode_id = e.id where e.project_id = ${p.id} group by e.id, e.idx order by e.idx`;
     const cuts: string[] = [];
     for (const e of eps) { // an episode with unrenderable shots still ships, with a slate where they'd be
-      const cut = await requestCut(e.id, e.missing ? 'preview' : 'final', {});
-      await enqueue('cut.assemble', { cutId: cut.id }, { projectId: p.id, maxAttempts: 2 });
+      const { cut } = await queueCut(e.id, e.missing ? 'preview' : 'final', {});
       cuts.push(cut.id);
     }
     await patchState(p.id, { cuts, partial: eps.some((e: any) => e.missing > 0) });
@@ -169,7 +173,20 @@ async function assembling(p: any, st: any): Promise<any> {
   const bad = rows.find((r: any) => r.status === 'failed');
   if (bad) throw new PermanentError(`Editing failed: ${bad.error}`, 'cut_failed');
   await setStage(p.id, 'done');
+  await projectEvent({ projectId: p.id, stage: 'done' });
   return { stage: 'done' };
+}
+
+/**
+ * What a customer reads when their film stops. Our own refusals and explanations (PermanentErrors written for people)
+ * are shown as they are; anything else (a provider outage, a bug, a missing key) gets a plain sentence, and the real
+ * error stays on the job for the operator.
+ */
+export function customerMessage(error: unknown, jobError?: string | null): string {
+  const internal = /^(llm_|config$|permanent$)/;
+  if (error instanceof PermanentError && !internal.test(error.code)) return error.message.slice(0, 500);
+  if (/^Interrupted too many times/.test(String(jobError || ''))) return 'The server restarted several times while your film was being made. Press Try again to continue where it stopped.';
+  return 'Something went wrong while making your film. Press Try again to continue where it stopped.';
 }
 
 /** The autopilot gave up. Record where, and refund the setup fee if nothing was delivered yet. */
@@ -178,11 +195,13 @@ export async function autopilotFailed(payload: { projectId: string }, ctx: JobCt
   if (!p || p.mode !== 'vibe') return;
   const [j] = await sql`select error from jobs where id = ${ctx.job.id}`;
   const st = p.autopilot || {};
-  await sql.begin(async (tx) => {
+  const shown = customerMessage(ctx.error, j?.error);
+  await begin(async (tx) => {
     const refund = BEFORE_READY.includes(p.stage) && Number(st.setup_fee) > 0 && !st.setup_refunded;
-    if (refund) await credit(tx, p.owner_id, Number(st.setup_fee), 'refund', p.id);
+    if (refund) await credit(tx, p.owner_id, Number(st.setup_fee), 'refund', p.id, p.api_key_id);
     if (Number(st.repitch_fee) > 0) await credit(tx, p.owner_id, Number(st.repitch_fee), 'refund', p.id); // new takes that never came
-    await tx`update projects set stage = 'failed', stage_error = ${String(j?.error || 'Something went wrong.').slice(0, 500)},
+    await tx`update projects set stage = 'failed', stage_error = ${shown},
       autopilot = autopilot || ${tx.json({ failed_stage: p.stage, repitch_fee: null, ...(refund ? { setup_refunded: true } : {}) })}, updated_at = now() where id = ${p.id}`;
   });
+  await projectEvent({ projectId: p.id, stage: 'failed' });
 }

@@ -9,6 +9,11 @@ let sweptAt = 0;
 
 /** Count one hit; returns seconds to wait when over the limit, else 0. */
 export function hit(key: string, max: number, windowSec: number, now = Date.now()): number {
+  return hitInfo(key, max, windowSec, now).wait;
+}
+
+/** Count one hit, with what a client needs to pace itself: requests left in this window and when it resets. */
+export function hitInfo(key: string, max: number, windowSec: number, now = Date.now()): { wait: number; remaining: number; resetAt: number } {
   if (now - sweptAt > 60_000) { // drop expired windows once a minute so the map can't grow forever
     sweptAt = now;
     for (const [k, w] of windows) if (w.resetAt <= now) windows.delete(k);
@@ -16,7 +21,7 @@ export function hit(key: string, max: number, windowSec: number, now = Date.now(
   let w = windows.get(key);
   if (!w || w.resetAt <= now) { w = { count: 0, resetAt: now + windowSec * 1000 }; windows.set(key, w); }
   w.count++;
-  return w.count > max ? Math.ceil((w.resetAt - now) / 1000) : 0;
+  return { wait: w.count > max ? Math.ceil((w.resetAt - now) / 1000) : 0, remaining: Math.max(0, max - w.count), resetAt: w.resetAt };
 }
 
 /** Middleware for signed-in routes: `max` requests per `windowSec` per customer, in the named bucket. */

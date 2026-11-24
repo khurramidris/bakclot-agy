@@ -49,7 +49,15 @@ function Billing() {
       {!me ? (
         <p className="mt-6 text-sm text-muted-foreground">Loading…</p>
       ) : !me.plan.active ? (
-        <PlanOffer me={me} busy={subscribe.isPending} onSubscribe={() => subscribe.mutate()} />
+        <>
+          <PlanOffer me={me} busy={subscribe.isPending} onSubscribe={() => subscribe.mutate()} />
+          <TopUps
+            me={me}
+            busyPack={topup.isPending ? (topup.variables ?? null) : null}
+            onBuy={(id) => topup.mutate(id)}
+            noPlan
+          />
+        </>
       ) : (
         <>
           <section className="mt-8 grid gap-px border border-border bg-border md:grid-cols-3">
@@ -108,30 +116,11 @@ function Billing() {
             </div>
           </section>
 
-          <h2 className="meta-label mb-4 mt-12">Top up</h2>
-          <p className="max-w-2xl text-sm text-muted-foreground">
-            Monthly credit is spent first. Top-up credit never expires, and stays yours if you
-            cancel.
-          </p>
-          <div className="mt-6 grid gap-4 sm:grid-cols-3">
-            {me.packs.map((p) => (
-              <div key={p.id} className="border border-border bg-background p-6">
-                <div className="meta-label">{p.id}</div>
-                <div className="mt-2 text-3xl font-bold">{usd(p.usd)}</div>
-                <div className="mt-1 text-sm text-muted-foreground">{footageOf(me, p.usd)}</div>
-                <Button
-                  className="mt-4 w-full"
-                  onClick={() => topup.mutate(p.id)}
-                  disabled={!me.payments_enabled || !p.available || topup.isPending}
-                >
-                  {topup.isPending && topup.variables === p.id ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : null}
-                  Buy
-                </Button>
-              </div>
-            ))}
-          </div>
+          <TopUps
+            me={me}
+            busyPack={topup.isPending ? (topup.variables ?? null) : null}
+            onBuy={(id) => topup.mutate(id)}
+          />
           <Pricing me={me} />
         </>
       )}
@@ -139,6 +128,56 @@ function Billing() {
         <p className="mt-4 text-sm text-muted-foreground">Payments are not switched on yet.</p>
       ) : null}
     </StudioShell>
+  );
+}
+
+/** Credit packs. Top-up credit never expires; it also pays for the API, which needs credit but no plan. */
+function TopUps({
+  me,
+  busyPack,
+  onBuy,
+  noPlan,
+}: {
+  me: Me;
+  busyPack: string | null;
+  onBuy: (id: string) => void;
+  noPlan?: boolean;
+}) {
+  return (
+    <>
+      <h2 className="meta-label mb-4 mt-12">{noPlan ? "Credit for the API" : "Top up"}</h2>
+      <p className="max-w-2xl text-sm text-muted-foreground">
+        {noPlan ? (
+          <>
+            The{" "}
+            <Link to="/developers" className="underline underline-offset-2">
+              Backlot API
+            </Link>{" "}
+            needs credit, not a plan. Top-up credit never expires. Making videos here in the studio
+            needs the {me.plan.name} plan.
+          </>
+        ) : (
+          "Monthly credit is spent first. Top-up credit never expires, stays yours if you cancel, and also pays for the API."
+        )}
+      </p>
+      <div className="mt-6 grid gap-4 sm:grid-cols-3">
+        {me.packs.map((p) => (
+          <div key={p.id} className="border border-border bg-background p-6">
+            <div className="meta-label">{p.id}</div>
+            <div className="mt-2 text-3xl font-bold">{usd(p.usd)}</div>
+            <div className="mt-1 text-sm text-muted-foreground">{footageOf(me, p.usd)}</div>
+            <Button
+              className="mt-4 w-full"
+              onClick={() => onBuy(p.id)}
+              disabled={!me.payments_enabled || !p.available || !!busyPack}
+            >
+              {busyPack === p.id ? <Loader2 className="size-4 animate-spin" /> : null}
+              Buy
+            </Button>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 

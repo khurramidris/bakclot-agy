@@ -5,6 +5,7 @@ import heroImage from "@/assets/hero-stage.jpg";
 import { Logo, StoryLine } from "@/components/brand/Logo";
 import { SiteFooter } from "@/components/layout/SiteFooter";
 import { usd } from "@/lib/engine";
+import { PRICES } from "@/lib/publicConfig";
 import { publicPlan } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -306,6 +307,19 @@ function Pricing() {
             Your monthly credits cover writing, casting, filming and editing. You see the price of
             every film and approve it before anything is rendered. Need more? Top up any time.
           </p>
+          <div className="mt-8 max-w-md border-l-2 border-primary pl-4">
+            <div className="meta-label">For developers</div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Make clips and whole microdramas from your own code with the Backlot API. Pay as you
+              go at {usd(PRICES.per_second_usd)} per second of finished video, no plan needed.{" "}
+              <Link
+                to="/docs/api"
+                className="text-foreground underline underline-offset-2 hover:text-primary"
+              >
+                Read the API docs
+              </Link>
+            </p>
+          </div>
         </div>
         <div className="rounded-xl border border-primary/50 bg-card p-8 shadow-[var(--shadow-glow)]">
           <div className="meta-label text-primary">{plan.name}</div>

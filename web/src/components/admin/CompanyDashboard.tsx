@@ -103,6 +103,7 @@ export function CompanyDashboard() {
             <Health b={b} />
             <Customers b={b} />
             <Made b={b} />
+            <Api b={b} />
           </div>
           <Problems b={b} />
           <TopCustomers b={b} />
@@ -506,7 +507,64 @@ function Health({ b }: { b: Business }) {
               </Status>
             ),
           ],
+          ...(h.capacity
+            ? ([
+                [
+                  "Render capacity",
+                  <Status key="c" level={h.capacity.at_cap ? "warn" : "ok"}>
+                    {h.capacity.in_flight} of {h.capacity.in_flight_cap} slots in use
+                    {h.capacity.waiting ? ` · ${h.capacity.waiting} waiting` : ""}
+                    {h.capacity.at_cap ? " · full" : ""}
+                  </Status>,
+                ],
+                ...(h.capacity.gpu
+                  ? [
+                      [
+                        "GPUs needed",
+                        <Status key="n" level={h.capacity.gpu.at_ceiling ? "bad" : "ok"}>
+                          {h.capacity.gpu.needed} needed · floor {h.capacity.gpu.floor} · ceiling{" "}
+                          {h.capacity.gpu.ceiling}
+                          {h.capacity.gpu.at_ceiling ? " · raise RUNPOD_MAX_WORKERS" : ""}
+                          {h.capacity.gpu.managed ? "" : " · autoscaling off"}
+                        </Status>,
+                      ] as [string, ReactNode],
+                    ]
+                  : []),
+              ] as [string, ReactNode][])
+            : []),
           ["Stored files", `${formatBytes(h.storage_bytes)}`, `${count(h.stored_files)} files`],
+        ]}
+      />
+    </Panel>
+  );
+}
+
+function Api({ b }: { b: Business }) {
+  const a = b.api;
+  if (!a) return null;
+  return (
+    <Panel title="API">
+      <Rows
+        rows={[
+          ["Status", a.enabled ? "On" : "Off (API_ENABLED)"],
+          [
+            "Developers",
+            `${count(a.developers)} with keys`,
+            a.suspended ? `${a.suspended} suspended` : undefined,
+          ],
+          [
+            "Requests",
+            count(a.requests),
+            a.server_errors ? `${a.server_errors} server errors` : undefined,
+          ],
+          ["Made", `${count(a.videos)} videos · ${count(a.films)} films`],
+          ["Spent through the API", money(a.spend_usd)],
+          [
+            "Webhooks failed",
+            <Status key="w" level={a.webhooks_failed ? "warn" : "ok"}>
+              {a.webhooks_failed}
+            </Status>,
+          ],
         ]}
       />
     </Panel>

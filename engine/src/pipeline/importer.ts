@@ -2,7 +2,9 @@
 // front end) into rows: project + episodes. Scenes and assets come later, in the breakdown.
 
 import { z } from 'zod';
-import { sql } from '../db.js';
+import { sql, begin } from '../db.js';
+import { config } from '../config.js';
+import { checkScript } from './limits.js';
 
 const RATIOS = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
 
@@ -92,7 +94,11 @@ export function normalizeImport(body: any): Normalized {
 
 export async function createProject(ownerId: string, body: any) {
   const n = normalizeImport(body);
-  return sql.begin(async (tx) => {
+  // Bounded before anything is stored or sent to a model: so many episodes, each a script one episode can hold.
+  if (n.episodes.length > config.scripts.maxImportEpisodes) throw Object.assign(new Error(`A project can be imported with up to ${config.scripts.maxImportEpisodes} episodes; this one has ${n.episodes.length}.`), { status: 400, code: 'too_long' });
+  n.episodes.forEach((e, i) => checkScript(e.script, `Episode ${i + 1}'s script`));
+  n.title = String(n.title || 'Untitled').slice(0, 200);
+  return begin(async (tx) => {
     const [p] = await tx`
       insert into projects (owner_id, title, format, aspect, resolution, language, style, story_bible, settings, source)
       values (${ownerId}, ${n.title}, ${n.format}, ${n.aspect}, ${n.resolution}, ${n.language},

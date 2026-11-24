@@ -9,7 +9,7 @@ import { StorageBar } from "@/components/StorageBar";
 import { StudioShell } from "@/components/layout/StudioShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { engine, STAGE_LABEL, usd } from "@/lib/engine";
+import { engine, STAGE_LABEL, usd, type AdminCustomer } from "@/lib/engine";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/admin/$ownerId")({
@@ -18,6 +18,48 @@ export const Route = createFileRoute("/_authenticated/admin/$ownerId")({
 });
 
 const when = (iso: string | null) => (iso ? format(new Date(iso), "d MMM yyyy, HH:mm") : "—");
+
+/** The customer's use of the public API, and suspending or lifting it (it suspends itself after repeated refusals). */
+function ApiAccess({ ownerId, api }: { ownerId: string; api: AdminCustomer["api"] }) {
+  const qc = useQueryClient();
+  const toggle = useMutation({
+    mutationFn: (suspended: boolean) => engine.admin.suspendApi(ownerId, suspended),
+    onSuccess: (r) => {
+      toast.success(r.suspended ? "API access suspended." : "API access restored.");
+      void qc.invalidateQueries({ queryKey: ["admin", "customer", ownerId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  return (
+    <Panel title="API">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="text-sm">
+          <p className={cn("text-lg font-bold", api.suspended && "text-destructive")}>
+            {api.suspended ? "Suspended" : api.active_keys ? "Active" : "Not used"}
+          </p>
+          {api.suspended ? (
+            <p className="mt-1 text-muted-foreground">
+              {api.suspended_reason} · {when(api.suspended_at)}
+            </p>
+          ) : null}
+          <p className="mt-1 text-muted-foreground">
+            {api.active_keys} key{api.active_keys === 1 ? "" : "s"} · {api.requests_30d} requests
+            and {usd(api.spend_30d_usd)} spent in 30 days · {api.refusals_24h} refusal
+            {api.refusals_24h === 1 ? "" : "s"} in 24 h
+          </p>
+        </div>
+        <Button
+          variant={api.suspended ? "default" : "outline"}
+          onClick={() => toggle.mutate(!api.suspended)}
+          disabled={toggle.isPending}
+        >
+          {toggle.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
+          {api.suspended ? "Lift suspension" : "Suspend API access"}
+        </Button>
+      </div>
+    </Panel>
+  );
+}
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -140,6 +182,10 @@ function Customer() {
                 <p className="text-sm text-muted-foreground">No videos yet.</p>
               )}
             </Panel>
+          </div>
+
+          <div className="mt-4">
+            <ApiAccess ownerId={ownerId} api={data.api} />
           </div>
 
           <div className="mt-4">

@@ -18,7 +18,9 @@ import { Route as TermsRouteImport } from './routes/terms'
 import { Route as AuthenticatedAccountRouteImport } from './routes/_authenticated/account'
 import { Route as AuthenticatedBillingRouteImport } from './routes/_authenticated/billing'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedDevelopersRouteImport } from './routes/_authenticated/developers'
 import { Route as AuthenticatedSetupRouteImport } from './routes/_authenticated/setup'
+import { Route as DocsApiRouteImport } from './routes/docs.api'
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin.index'
 import { Route as AuthenticatedAdminOwnerIdRouteImport } from './routes/_authenticated/admin.$ownerId'
 import { Route as AuthenticatedPProjectIdRouteImport } from './routes/_authenticated/p.$projectId'
@@ -67,10 +69,20 @@ const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedDevelopersRoute = AuthenticatedDevelopersRouteImport.update({
+  id: '/developers',
+  path: '/developers',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedSetupRoute = AuthenticatedSetupRouteImport.update({
   id: '/setup',
   path: '/setup',
   getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const DocsApiRoute = DocsApiRouteImport.update({
+  id: '/docs/api',
+  path: '/docs/api',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedAdminIndexRoute = AuthenticatedAdminIndexRouteImport.update({
   id: '/admin/',
@@ -98,7 +110,9 @@ export interface FileRoutesByFullPath {
   '/account': typeof AuthenticatedAccountRoute
   '/billing': typeof AuthenticatedBillingRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/developers': typeof AuthenticatedDevelopersRoute
   '/setup': typeof AuthenticatedSetupRoute
+  '/docs/api': typeof DocsApiRoute
   '/admin/$ownerId': typeof AuthenticatedAdminOwnerIdRoute
   '/p/$projectId': typeof AuthenticatedPProjectIdRoute
   '/admin/': typeof AuthenticatedAdminIndexRoute
@@ -112,7 +126,9 @@ export interface FileRoutesByTo {
   '/account': typeof AuthenticatedAccountRoute
   '/billing': typeof AuthenticatedBillingRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/developers': typeof AuthenticatedDevelopersRoute
   '/setup': typeof AuthenticatedSetupRoute
+  '/docs/api': typeof DocsApiRoute
   '/admin/$ownerId': typeof AuthenticatedAdminOwnerIdRoute
   '/p/$projectId': typeof AuthenticatedPProjectIdRoute
   '/admin': typeof AuthenticatedAdminIndexRoute
@@ -128,7 +144,9 @@ export interface FileRoutesById {
   '/_authenticated/account': typeof AuthenticatedAccountRoute
   '/_authenticated/billing': typeof AuthenticatedBillingRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/developers': typeof AuthenticatedDevelopersRoute
   '/_authenticated/setup': typeof AuthenticatedSetupRoute
+  '/docs/api': typeof DocsApiRoute
   '/_authenticated/admin/$ownerId': typeof AuthenticatedAdminOwnerIdRoute
   '/_authenticated/p/$projectId': typeof AuthenticatedPProjectIdRoute
   '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
@@ -144,7 +162,9 @@ export interface FileRouteTypes {
     | '/account'
     | '/billing'
     | '/dashboard'
+    | '/developers'
     | '/setup'
+    | '/docs/api'
     | '/admin/$ownerId'
     | '/p/$projectId'
     | '/admin/'
@@ -158,7 +178,9 @@ export interface FileRouteTypes {
     | '/account'
     | '/billing'
     | '/dashboard'
+    | '/developers'
     | '/setup'
+    | '/docs/api'
     | '/admin/$ownerId'
     | '/p/$projectId'
     | '/admin'
@@ -173,7 +195,9 @@ export interface FileRouteTypes {
     | '/_authenticated/account'
     | '/_authenticated/billing'
     | '/_authenticated/dashboard'
+    | '/_authenticated/developers'
     | '/_authenticated/setup'
+    | '/docs/api'
     | '/_authenticated/admin/$ownerId'
     | '/_authenticated/p/$projectId'
     | '/_authenticated/admin/'
@@ -186,6 +210,7 @@ export interface RootRouteChildren {
   PrivacyRoute: typeof PrivacyRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   TermsRoute: typeof TermsRoute
+  DocsApiRoute: typeof DocsApiRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -253,12 +278,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/developers': {
+      id: '/_authenticated/developers'
+      path: '/developers'
+      fullPath: '/developers'
+      preLoaderRoute: typeof AuthenticatedDevelopersRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/setup': {
       id: '/_authenticated/setup'
       path: '/setup'
       fullPath: '/setup'
       preLoaderRoute: typeof AuthenticatedSetupRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/docs/api': {
+      id: '/docs/api'
+      path: '/docs/api'
+      fullPath: '/docs/api'
+      preLoaderRoute: typeof DocsApiRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_authenticated/admin/': {
       id: '/_authenticated/admin/'
@@ -288,6 +327,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAccountRoute: typeof AuthenticatedAccountRoute
   AuthenticatedBillingRoute: typeof AuthenticatedBillingRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedDevelopersRoute: typeof AuthenticatedDevelopersRoute
   AuthenticatedSetupRoute: typeof AuthenticatedSetupRoute
   AuthenticatedAdminOwnerIdRoute: typeof AuthenticatedAdminOwnerIdRoute
   AuthenticatedPProjectIdRoute: typeof AuthenticatedPProjectIdRoute
@@ -298,6 +338,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAccountRoute: AuthenticatedAccountRoute,
   AuthenticatedBillingRoute: AuthenticatedBillingRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedDevelopersRoute: AuthenticatedDevelopersRoute,
   AuthenticatedSetupRoute: AuthenticatedSetupRoute,
   AuthenticatedAdminOwnerIdRoute: AuthenticatedAdminOwnerIdRoute,
   AuthenticatedPProjectIdRoute: AuthenticatedPProjectIdRoute,
@@ -314,6 +355,7 @@ const rootRouteChildren: RootRouteChildren = {
   PrivacyRoute: PrivacyRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   TermsRoute: TermsRoute,
+  DocsApiRoute: DocsApiRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

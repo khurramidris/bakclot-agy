@@ -8,7 +8,7 @@ Everything below is a one-time setup. After it, every push to `main` that passes
 ```
                  ┌──────────────── Railway ────────────────┐
  customers ────▶ │  backlot image (Dockerfile)             │ ──▶ Anthropic (scripts, planning)
-                 │  web app + API + job worker + FFmpeg    │ ──▶ MiniMax API (reference images, voices)
+ developers ───▶ │  web app + /api/v1 + job worker + FFmpeg│ ──▶ MiniMax API (reference images, voices)
                  └──────┬───────────────┬──────────────────┘ ──▶ Lemon Squeezy (subscriptions, top-ups, tax)
                         │               │ jobs / status / cancel / scaling
                  Supabase:              ▼
@@ -46,23 +46,36 @@ Then move video to your own GPUs on RunPod. Follow `docs/SELF-HOSTED-H3.md` (pla
    - To prove the whole path before the model is ready, set `MODEL_BACKEND=fake`: it renders test patterns.
 4. Copy the endpoint id → `RUNPOD_ENDPOINT_ID`, and create an API key → `RUNPOD_API_KEY`.
 
-### Scaling settings (engine env)
+### GPU autoscaling (engine env)
+
+With `VIDEO_PROVIDER=runpod` the engine scales the GPUs by itself (`engine/src/capacity.ts`). Every 30 seconds, and at
+once whenever new work is queued, it counts the renders that could run now and sets the endpoint's worker floor to one
+GPU per `RUNPOD_JOBS_PER_WORKER` of them, up to `RUNPOD_MAX_WORKERS`. RunPod adds GPUs on top as its own queue grows.
+While customers are active it keeps `RUNPOD_WARM_WORKERS` warm, and `RUNPOD_WARM_MINUTES` after the last render it lets
+the floor fall to zero, so an idle night costs nothing. The number of renders sent at once follows the ceiling
+(max workers × jobs per worker), so raising one setting is all it takes to grow.
 
 | Variable | Start with | Meaning |
 |---|---|---|
-| `RUNPOD_MAX_WORKERS` | 5 | Budget cap: never more GPUs than this |
+| `RUNPOD_MAX_WORKERS` | 5 | Budget cap: never more GPUs than this. Raise it (and your RunPod quota) as demand grows |
 | `RUNPOD_WARM_WORKERS` | 1 | GPUs kept warm while customers are active |
 | `RUNPOD_WARM_MINUTES` | 15 | How long after the last render to stay warm before scaling to 0 |
-| `RUNPOD_JOBS_PER_WORKER` | 2 | Queue depth per GPU before the floor rises |
-| `VIDEO_MAX_INFLIGHT` | 10 | Renders sent to RunPod at once (≈ max workers × 2) |
+| `RUNPOD_JOBS_PER_WORKER` | 2 | Renders per GPU (one filming, one waiting) before the floor rises |
+| `RUNPOD_MANAGE_SCALING` | 1 (with RunPod) | 0 leaves the worker floor to the RunPod console |
+| `RUNPOD_CAPACITY_TICK_SECONDS` | 30 | How often the controller looks (every 15 s while work is waiting) |
+| `VIDEO_MAX_INFLIGHT` | derived | Renders sent at once: max workers × jobs per worker on RunPod, 10 on MiniMax |
 | `MAX_ACTIVE_RENDERS_PER_USER` | 4 | Clips filming at once per customer, across all their videos, whatever the clip length |
 | `RENDERS_PER_PROJECT` | empty | Clips of one film at once, in story order (empty = the customer's limit, so one film can use all 4) |
 | `CHAIN_CLIPS` | 0 | 1 sends each scene's previous clip as a reference video: better matching, but its seconds are billed as input |
-| `RUNPOD_MANAGE_SCALING` | 0, then 1 | Start at 0, watch `/v1/admin/capacity`, then let the controller act |
-| `RUNPOD_GPU_PRICE_PER_SECOND` | your rate | Records real GPU cost per clip, for margin reports |
+| `RUNPOD_GPU_PRICE_PER_SECOND` | your rate | Records real GPU cost per clip, for margin reports and the API's price guard |
 
-As demand grows, raise `RUNPOD_MAX_WORKERS` (and your RunPod quota). Everything else adapts: RunPod adds
-workers when the queue backs up, and the controller drops the floor to zero when nobody is rendering.
+`/admin` shows the render slots in use and waiting and, with RunPod, the GPUs needed against the floor and the ceiling,
+with "raise RUNPOD_MAX_WORKERS" when demand needs more GPUs than the ceiling (the engine also logs it every 30 minutes
+while it lasts). `GET /v1/admin/capacity` has the raw numbers, including the controller's last decision.
+
+The controller sets the endpoint's **Active workers** (the floor) and **Max workers** (`RUNPOD_MAX_WORKERS`) itself, so
+leave those to it. In the RunPod console set the rest: **Idle timeout** 60–120 s, **Queue delay** scaling at about 4 s,
+**FlashBoot** on, and a worker quota at least `RUNPOD_MAX_WORKERS`.
 
 ## 3. Lemon Squeezy (payments)
 
@@ -76,7 +89,8 @@ invoices. Start in **test mode**, and switch the store to live once the launch c
 3. **Credit packs**: one product each, pricing **Single payment**: Starter $10, Creator $50, Studio $200.
    Copy each variant id into `CREDIT_PACKS=starter:10:<id>,creator:50:<id>,studio:200:<id>`. The first
    number is the credit the customer gets, so keep it equal to the product price. The engine never trusts the
-   amount paid, which includes tax.
+   amount paid, which includes tax. Packs are sold to anyone, with or without a plan: they're how developers pay
+   for the API.
 4. **Settings → API**: create an API key → `LEMONSQUEEZY_API_KEY`. Test-mode and live-mode keys are separate.
 5. **Settings → Webhooks → +**: URL `https://<your-domain>/webhooks/lemonsqueezy`, a long random signing
    secret (`openssl rand -hex 32`) → `LEMONSQUEEZY_WEBHOOK_SECRET`, and these events:
@@ -99,11 +113,14 @@ How the money works:
   page. Each charge is taken when the work runs and refunded in full (to the never-expiring balance) if it fails, so
   retries and duplicate clicks never cost the customer. Unaffordable actions are refused up front with a 402. Compare
   "charged" with "our cost" on each customer's Admin page and tune the prices.
-- Creating, rendering, retakes and uploads need an active plan: `active`, `on_trial`, `past_due` (grace while
-  Lemon Squeezy retries the card), or `cancelled` until its `ends_at`. When the subscription expires, the rest
-  of the plan credit goes too. Top-ups stay.
-- **Storage**: every project file is counted per customer against `PLAN_STORAGE_GB` (10). Nothing is deleted
-  automatically: files stay until the customer deletes them (on Cloudflare R2, a full 10 GB costs about $0.15 a
+- In the app, creating, rendering, retakes, edits and uploads need an active plan: `active`, `on_trial`, `past_due`
+  (grace while Lemon Squeezy retries the card), or `cancelled` until its `ends_at`. When the subscription expires, the
+  rest of the plan credit goes too. Top-ups stay. The API needs credit only, no plan.
+- Long work is priced by its size, so a big job can't ride on a flat fee: the setup fee grows per minute beyond
+  `SETUP_FEE_INCLUDED_MINUTES`, a breakdown per scene beyond `BREAKDOWN_INCLUDED_SCENES`, a shot plan per scene beyond
+  `PLAN_INCLUDED_SCENES`, and pictures past `FREE_INPUT_IMAGES` on a MiniMax request are counted in our cost.
+- **Storage**: every app project file is counted per customer against `PLAN_STORAGE_GB` (10). Nothing in the app is
+  deleted automatically (API outputs expire after `API_RETENTION_DAYS` instead): files stay until the customer deletes them (on Cloudflare R2, a full 10 GB costs about $0.15 a
   month). When a customer is over it, new work is refused with "You're using 10.1 of 10 GB. Delete old videos to
   make room." Renders already running finish. Deleting a video deletes its files.
 - Webhooks are verified (`X-Signature`) and applied once: `payments` rows are keyed `ls:invoice:<id>` and
@@ -121,15 +138,48 @@ How the money works:
 3. **Settings → Networking**: generate a domain, or add your own. Use it for `PUBLIC_BASE_URL`, `APP_URL`
    and `CORS_ORIGINS`.
 4. Deploy. `https://<your-domain>/health` should return `{"ok":true,"mock":false}`.
+5. **Settings → Deploy**: check that **Healthcheck path** is `/health` and set **Restart policy** to **Always** (paid
+   plans; on the trial plan keep "On failure"). `railway.json` sets the builder, the health check and a restart
+   policy, but Railway is replacing that file with its newer Infrastructure as Code, so set them in the settings too.
+   Railway calls the health check only while a deploy goes live: it doesn't watch it afterwards. The engine looks
+   after itself (it exits to be restarted if its database pool jams while the database is fine, `DB_WATCHDOG`), and
+   `/health` answers `503` within 5 seconds when the database stops answering.
+6. **An outside uptime monitor** on `https://<your-domain>/health` (UptimeRobot or Better Stack, free), alerting you by
+   email or phone. It's the only thing that tells you the site is down before a customer does.
+
+**Database connections:** each engine process opens up to `DB_POOL_MAX` (10). Keep replicas × `DB_POOL_MAX` under your
+Supabase pooler's pool size (Project Settings → Database → Connection pooling; it's small on the smaller compute sizes,
+so check it before adding replicas). A transaction that waits on a lock longer than `DB_LOCK_TIMEOUT_MS` gives up and
+the request is retried, so one stuck request can't freeze the rest.
 
 **Deploying while customers work:** a deploy gives running steps 20 seconds to finish, then hands what's left back to
 the queue, and the new version carries on at once. Railway only waits for this if you give it the time: add the
 variable `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`. Without it, or if an instance is killed outright, the cut-off steps
 are picked up again within about 3 minutes. Either way deploying mid-film delays it but loses nothing.
 
-**Scaling the app itself:** one instance handles the API, the job queue and FFmpeg editing. When editing
-backs up, add replicas. The queue is safe to share between instances. To separate the API from background
-work, run one service with `RUN_WORKER=0` and more with the start command `node dist/worker.js`.
+**Scaling the app itself:** one instance handles the web app, both APIs, the job queue and FFmpeg editing. The queue
+runs in lanes, each with its own slots per process, so a burst of one kind of work never starves the others:
+
+| Lane | Work | Slots |
+|---|---|---|
+| `llm` | writing, breakdowns, shot plans (long Claude turns, mostly waiting) | `WORKER_CONCURRENCY` (6) |
+| `render` | sending clips to the video service and collecting them | 8 |
+| `assets` | cast and set pictures, voices | 4 |
+| `media` | FFmpeg editing (CPU heavy) | 2 |
+| `io` | webhooks, cleanup, small jobs | 4 |
+
+`WORKER_LANES=llm:12,render:16,media:4` changes any of them. Within a lane, one customer gets at most
+`FAIR_LLM_PER_CUSTOMER` (3) writing jobs, 2 picture jobs and `FAIR_EDITS_PER_CUSTOMER` (1) edit at once; the rest wait
+their turn so nobody is held up behind one big order. When a lane backs up (the dashboard shows the queue), raise its
+slots or add replicas. The queue is safe to share between instances. To separate the web and API from background work,
+run one service with `RUN_WORKER=0` and more with the start command `node dist/worker.js`.
+
+**Uploads** are checked by content (not their name), decoded with an allow-list of formats and no network access, and
+at most `MEDIA_SLOTS` (3) at a time per process, with `MEDIA_QUEUE` (24) waiting; past that, callers are asked to retry
+(`503`), so a burst of uploads can't run the server out of memory.
+
+**Cleanup** runs hourly: finished jobs after 7 days and failed ones after 30, edits beyond the two newest per episode,
+old content-check verdicts, and the API's expired outputs and logs.
 
 ## 5. Launch check (10 minutes)
 
@@ -143,7 +193,11 @@ work, run one service with `RUN_WORKER=0` and more with the start command `node 
 6. Delete a video from the dashboard: storage on /billing goes down.
 7. "Forgot password?" on the sign-in page: the email arrives and its link lets you set a new password.
 8. Cancel from the customer portal: /billing shows "Cancelled · ends …" and creating still works until then.
-9. As an admin (`ADMIN_USER_IDS`), open `/v1/admin/capacity`: RunPod workers and the controller's decision.
+9. As an admin (`ADMIN_USER_IDS`), open `/admin`: under Health, "Render capacity" shows the slots in use and, with
+   RunPod, the GPUs needed against the floor and the ceiling.
+10. With `API_ENABLED=1` (see Public API below): on `/developers` create a key with a $5 monthly limit, then run the
+    quick start from `/docs/api` with it. The video arrives, the balance drops by its price, and a webhook to a test
+    receiver (webhook.site) shows a `Backlot-Signature`. Revoke the key afterwards.
 
 ## Operations
 - **Admin** (`/admin`, users in `ADMIN_USER_IDS`) is the company dashboard, for the last 7 days, 30 days,
@@ -165,7 +219,29 @@ work, run one service with `RUN_WORKER=0` and more with the start command `node 
   - each customer's detail: plan, credits, storage, films with charged vs provider cost, payments and the credit
     ledger, plus credit grants and deductions (with a note; top-up bucket; ledger reasons
     `admin_grant` / `admin_deduct`)
-- **Setup check** (`/setup`) tests every production setting and service.
+- **Setup check** (`/setup`) tests every production setting and service, including the company details and, with the
+  API on, the price guard.
+- **Public API** (`/api/v1`, reference `docs/API.md`, developers' guide `/docs/api`): off until `API_ENABLED=1`. Turn
+  it on once a real film and real clips have been made and their cost checked on `/admin`. It sells at the app's prices
+  and needs prepaid credit, no plan.
+
+  | Variable | Start with | Meaning |
+  |---|---|---|
+  | `API_ENABLED` | 0 | 1 opens `/api/v1`. While it's 0, keys can be made but requests get a 404, and the Developers page and `/docs/api` say the API opens soon |
+  | `API_RETENTION_DAYS` / `API_FAILED_RETENTION_DAYS` | 7 / 1 | When API outputs are deleted after they finish or fail |
+  | `API_REQUESTS_PER_MINUTE` | 300 | Per key (per engine instance) |
+  | `API_CREATES_PER_MINUTE` | 30 | New videos and films a minute per account |
+  | `API_MAX_ACTIVE_PER_ACCOUNT` / `API_MAX_ACTIVE_FILMS` | 20 / 3 | Videos and films in progress at once per account |
+  | `API_FILM_MAX_SECONDS` | 900 | The longest film one request may ask for |
+  | `API_REFUSALS_BEFORE_SUSPEND` | 5 | Content refusals in 24 h before the account's API access is suspended |
+  | `API_WEBHOOK_TIMEOUT_SEC` / `API_MAX_KEYS` / `API_LOG_DAYS` | 10 / 10 / 30 | Webhook timeout, keys per account, request log kept |
+
+  The **price guard** refuses paid API requests (`503 pricing_unavailable`, red on `/setup`) whenever the video service
+  costs us as much per second as we charge: MiniMax's list price, or your GPUs' measured cost over the last week. A
+  suspended account shows on its Admin page with a button to restore it.
+- **Screenplay import** (`POST /v1/projects` with a script) is for local tools and tests; the web app doesn't offer it.
+  It's off in production unless `IMPORT_ENABLED=1`, and each script is held to `MAX_SCRIPT_CHARS`, `MAX_EPISODE_SCENES`
+  and `MAX_IMPORT_EPISODES`.
 - **Story engine** (how it works and how to judge a change: `docs/STORY-ENGINE.md`):
 
   | Variable | Start with | Meaning |
@@ -194,22 +270,27 @@ work, run one service with `RUN_WORKER=0` and more with the start command `node 
   image-to-video pins the picture as the first frame; if those clips look wrong, set
   `CLIP_IMAGE_PROVIDER=minimax` to send just that mode to MiniMax. `CHAIN_CLIPS` (off) decides whether films send
   each scene's previous shot along for continuity: billed as input seconds on MiniMax, double the GPU work on RunPod.
-- **Rate limits** are per customer and in memory, per instance:
-  - 600 API requests a minute
+- **Rate limits** in the app are per customer and in memory, per instance:
+  - 600 requests a minute
   - 30 new videos an hour
   - 30 billing calls an hour
   - 200 renders or retakes an hour
   - 300 asset calls an hour
-  Over a limit the API answers 429 with `Retry-After`.
+  - 30 edits (new cuts) an hour
+  Over a limit the engine answers 429 with `Retry-After`. The public API's own limits are above.
+- **Security headers:** the engine sends a Content Security Policy, `X-Frame-Options: DENY`, `nosniff`, a strict
+  referrer policy and HSTS (in production). Customer costs (what a job cost us) are visible to admins only.
 - **Fonts:** the Docker image installs DejaVu Sans, which subtitles and slates use. To use a font file that ships with the
   app instead (the desktop app does), set `SUBTITLE_FONT_FILE` and `SUBTITLE_FONTS_DIR`; with the fonts folder set, text
   drawn into pictures uses libass, so FFmpeg builds without the `drawtext` filter still work.
 
 ## 6. Before you take real money
 
-- Fill in the legal entity, jurisdiction, address and support email in `web/src/lib/legal.ts`.
+- Set the company details on Railway: `LEGAL_COMPANY`, `LEGAL_JURISDICTION`, `LEGAL_ADDRESS` and `SUPPORT_EMAIL`. The
+  Terms, the Privacy Policy and the support links read them at startup (no rebuild), and `/setup` flags them until set.
 - Have a lawyer review `/terms` and `/privacy` (`web/src/routes/terms.tsx`, `privacy.tsx`). They're
-  plain-language drafts. In particular, check the retention periods, the list of processors and their data
-  locations, the promise not to train on customer content (confirm it with each AI provider's terms), and the
-  consumer cancellation and refund rights where you sell.
+  plain-language drafts. In particular, check the retention periods (including the API's 7 days), the list of
+  processors and their data locations, the promise not to train on customer content (confirm it with each AI
+  provider's terms), the API terms (section 11: the developer answers for what their users send), and the consumer
+  cancellation and refund rights where you sell.
 - Switch the Lemon Squeezy store to live mode, and swap in the live API key, webhook secret and variant ids.

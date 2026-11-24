@@ -107,7 +107,11 @@ function Privacy() {
           Payment and credit records are kept as long as tax and accounting law requires (usually 6
           to 10 years).
         </li>
-        <li>Server logs are kept for up to 30 days.</li>
+        <li>Server logs, and the log of API requests, are kept for up to 30 days.</li>
+        <li>
+          Videos and films made through the API, and the files sent to make them, are deleted 7 days
+          after they finish (1 day after a failure).
+        </li>
       </ul>
 
       <h2>Your rights</h2>

@@ -244,7 +244,7 @@ export type Asset = {
   parent_id: string | null;
   error?: string | null;
   history_count?: number;
-  meta: { unused?: boolean; source?: string };
+  meta: { unused?: boolean; source?: string; stale_parent?: boolean; place_ref_missing?: boolean };
 };
 
 export type Episode = {
@@ -341,6 +341,33 @@ export type AdminCustomer = {
     provider_cost_usd: number;
     charged_usd: number;
   }[];
+  api: {
+    suspended: boolean;
+    suspended_reason: string | null;
+    suspended_at: string | null;
+    active_keys: number;
+    requests_30d: number;
+    refusals_24h: number;
+    spend_30d_usd: number;
+  };
+};
+
+export type Capacity = {
+  provider: string;
+  in_flight: number;
+  in_flight_cap: number;
+  waiting: number;
+  oldest_waiting_seconds: number;
+  at_cap: boolean;
+  gpu: {
+    floor: number;
+    ceiling: number;
+    needed: number;
+    at_ceiling: boolean;
+    managed: boolean;
+    renders_ready: number;
+    waiting_in_runpod_seconds: number;
+  } | null;
 };
 
 export type Business = {
@@ -418,6 +445,18 @@ export type Business = {
     storage_bytes: number;
     stored_files: number;
     gpu: { workers?: Record<string, number>; jobs?: Record<string, number>; error?: string } | null;
+    capacity?: Capacity;
+  };
+  api?: {
+    enabled: boolean;
+    developers: number;
+    suspended: number;
+    requests: number;
+    server_errors: number;
+    videos: number;
+    films: number;
+    spend_usd: number;
+    webhooks_failed: number;
   };
 };
 
@@ -458,6 +497,55 @@ export type Me = {
   clips: { min_seconds: number; max_seconds: number };
 };
 
+export type ApiKey = {
+  id: string;
+  name: string;
+  prefix: string;
+  monthly_limit_usd: number | null;
+  spent_this_month_usd?: number;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  active: boolean;
+};
+
+export type Developers = {
+  enabled: boolean;
+  base_url: string;
+  account: { webhook_secret_preview: string; suspended: boolean; suspended_reason: string | null };
+  keys: ApiKey[];
+  usage: {
+    days: number;
+    requests: number;
+    errors: number;
+    server_errors: number;
+    videos: number;
+    films: number;
+    spend_usd: number;
+    daily: { day: string; requests: number; errors: number }[];
+  };
+  recent_requests: {
+    request_id: string;
+    method: string;
+    path: string;
+    status: number;
+    error_code: string | null;
+    ms: number;
+    created_at: string;
+    key_name: string | null;
+  }[];
+  recent_webhooks: {
+    event: string;
+    status: string;
+    attempts: number;
+    last_status: number | null;
+    last_error: string | null;
+    created_at: string;
+    delivered_at: string | null;
+    project_id: string;
+  }[];
+};
+
 export const engine = {
   me: () => call<Me>("GET", "/me"),
   subscribe: () => call<{ url: string }>("POST", "/billing/subscribe", {}),
@@ -474,6 +562,20 @@ export const engine = {
     customer: (id: string) => call<AdminCustomer>("GET", `/admin/customers/${id}`),
     adjust: (id: string, usd: number, note: string) =>
       call<{ credits: Me["credits"] }>("POST", `/admin/customers/${id}/credit`, { usd, note }),
+    suspendApi: (id: string, suspended: boolean) =>
+      call<{ suspended: boolean }>("POST", `/admin/customers/${id}/api`, { suspended }),
+  },
+  developers: {
+    get: () => call<Developers>("GET", "/developers"),
+    createKey: (name: string, monthly_limit_usd: number | null) =>
+      call<ApiKey & { key: string }>("POST", "/developers/keys", { name, monthly_limit_usd }),
+    updateKey: (id: string, input: { name?: string; monthly_limit_usd?: number | null }) =>
+      call<ApiKey>("PATCH", `/developers/keys/${id}`, input),
+    revokeKey: (id: string) => call<ApiKey>("DELETE", `/developers/keys/${id}`),
+    revealSecret: () =>
+      call<{ webhook_secret: string }>("POST", "/developers/webhook-secret/reveal", {}),
+    rotateSecret: () =>
+      call<{ webhook_secret: string }>("POST", "/developers/webhook-secret/rotate", {}),
   },
   preflight: () => call<{ checks: SetupCheck[] }>("GET", "/admin/preflight").then((r) => r.checks),
   projects: () => call<{ projects: ProjectSummary[] }>("GET", "/projects").then((r) => r.projects),

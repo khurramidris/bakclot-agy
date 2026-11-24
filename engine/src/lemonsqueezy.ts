@@ -5,10 +5,10 @@
 // Plain REST (JSON:API); no SDK. Webhooks are verified by signature and applied at most once.
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { sql } from './db.js';
+import { sql, begin } from './db.js';
 import { config } from './config.js';
 import { PermanentError } from './queue.js';
-import { credit, currentSubscription, expirePlanCredit, planOf, resetPlanCredit } from './billing.js';
+import { credit, currentSubscription, expirePlanCredit, isActiveStatus, planOf, resetPlanCredit } from './billing.js';
 
 const ls = config.lemonsqueezy;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -20,6 +20,7 @@ async function api(method: string, path: string, body?: unknown) {
     method,
     headers: { accept: 'application/vnd.api+json', 'content-type': 'application/vnd.api+json', authorization: `Bearer ${ls.apiKey}` },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(20_000),
   });
   const j: any = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`Lemon Squeezy ${method} ${path} failed (${r.status}): ${j.errors?.[0]?.detail || j.errors?.[0]?.title || 'no detail'}`);
@@ -55,7 +56,6 @@ export async function subscribeCheckout(ownerId: string, email?: string | null) 
 export async function topupCheckout(ownerId: string, packId: string, email?: string | null) {
   const pack = config.credits.packs.find((p) => p.id === packId && p.variantId);
   if (!pack) throw new PermanentError(`Unknown credit pack. Choose one of: ${config.credits.packs.filter((p) => p.variantId).map((p) => p.id).join(', ') || 'none yet'}.`, 'bad_input');
-  if (!(await planOf(ownerId)).active) throw new PermanentError(`Top-ups are for ${config.plan.name} subscribers. Subscribe first.`, 'subscription_required');
   return checkout(ownerId, pack.variantId, email);
 }
 
@@ -106,14 +106,26 @@ export async function handleLemonEvent(evt: any) {
     const id = String(data.id || '');
     const owner = await ownerFor(evt, id);
     if (!id || !owner) return { ignored: 'no owner' };
-    await sql.begin(async (tx) => {
-      await tx`insert into subscriptions (id, owner_id, customer_id, variant_id, status, renews_at, ends_at)
+    const changedAt = date(a.updated_at);
+    const applied = await begin(async (tx) => {
+      // Webhooks can arrive out of order: one older than what we already have (by Lemon Squeezy's own updated_at) is ignored.
+      const [row] = await tx`insert into subscriptions (id, owner_id, customer_id, variant_id, status, renews_at, ends_at, ls_updated_at)
         values (${id}, ${owner}, ${a.customer_id != null ? String(a.customer_id) : null}, ${a.variant_id != null ? String(a.variant_id) : null},
-                ${String(a.status || 'unknown')}, ${date(a.renews_at)}, ${date(a.ends_at)})
+                ${String(a.status || 'unknown')}, ${date(a.renews_at)}, ${date(a.ends_at)}, ${changedAt})
         on conflict (id) do update set customer_id = excluded.customer_id, variant_id = excluded.variant_id, status = excluded.status,
-          renews_at = excluded.renews_at, ends_at = excluded.ends_at, updated_at = now()`;
-      if (a.status === 'expired') await expirePlanCredit(tx, owner, `ls:subscription:${id}`);
+          renews_at = excluded.renews_at, ends_at = excluded.ends_at, ls_updated_at = excluded.ls_updated_at, updated_at = now()
+        where subscriptions.ls_updated_at is null or excluded.ls_updated_at is null or excluded.ls_updated_at >= subscriptions.ls_updated_at
+        returning id`;
+      if (!row) return false;
+      // Plan credit goes only when the customer has no subscription left that still gives access (an old one expiring
+      // after they subscribed again must not take this month's credit).
+      if (a.status === 'expired') {
+        const subs = await tx`select status, ends_at from subscriptions where owner_id = ${owner} and id <> ${id}`;
+        if (!subs.some((x: any) => isActiveStatus(x.status, x.ends_at))) await expirePlanCredit(tx, owner, `ls:subscription:${id}`);
+      }
+      return true;
     });
+    if (!applied) return { subscription: id, ignored: 'older than the last event' };
     return { subscription: id, status: a.status };
   }
 
@@ -122,7 +134,7 @@ export async function handleLemonEvent(evt: any) {
     const owner = await ownerFor(evt, a.subscription_id);
     if (!owner) throw new RetryLater('Subscription not known yet.');
     const key = `ls:invoice:${data.id}`;
-    return sql.begin(async (tx) => {
+    return begin(async (tx) => {
       const [first] = await tx`insert into payments (id, owner_id, amount_usd, event_id) values (${key}, ${owner}, ${Number(a.subtotal_usd || 0) / 100}, ${name})
         on conflict (id) do nothing returning id`;
       if (!first) return { duplicate: true };
@@ -142,7 +154,7 @@ export async function handleLemonEvent(evt: any) {
     const owner = await ownerFor(evt);
     if (!owner) return { ignored: 'no owner' };
     const key = `ls:order:${data.id}`;
-    return sql.begin(async (tx) => {
+    return begin(async (tx) => {
       const [first] = await tx`insert into payments (id, owner_id, amount_usd, event_id) values (${key}, ${owner}, ${Number(a.subtotal_usd || 0) / 100}, ${name})
         on conflict (id) do nothing returning id`;
       if (!first) return { duplicate: true };

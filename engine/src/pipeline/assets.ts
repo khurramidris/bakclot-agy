@@ -6,12 +6,13 @@ import { sql } from '../db.js';
 import { storage } from '../storage.js';
 import { config } from '../config.js';
 import { PermanentError, enqueue, type Again, type JobCtx } from '../queue.js';
-import { generateImage, type RefImage } from '../providers/images.js';
+import { generateImage, placeRefsSupported, type RefImage } from '../providers/images.js';
 import { voiceDesign, ProviderError } from '../providers/minimax.js';
 import { mockVoice } from '../providers/mock.js';
 import { recordUsage } from '../usage.js';
-import { paid, requireCredit } from '../billing.js';
-import { trimAudio, probe, ffmpeg } from '../media/ffmpeg.js';
+import { jobKey, paid, requireCredit } from '../billing.js';
+import { trimAudio, probe, withMediaSlot } from '../media/ffmpeg.js';
+import { prepImage, prepAudio } from './clips.js';
 import { moderate, refusal } from '../moderation.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -140,7 +141,7 @@ export async function generateAsset(assetId: string, ctx?: JobCtx, o: { note?: s
   const voice = a.kind === 'voice';
   const price = o.covered ? 0 : voice ? config.credits.actions.voice : config.credits.actions.image;
   try {
-    return await paid(p.owner_id, price, voice ? 'voice_gen' : 'image_gen', assetId, () => produce());
+    return await paid(p.owner_id, price, voice ? 'voice_gen' : 'image_gen', assetId, () => produce(), jobKey(ctx?.job, voice ? 'voice_gen' : 'image_gen'));
   } catch (e: any) {
     const permanent = e instanceof PermanentError || (e instanceof ProviderError && !e.retryable);
     if (permanent) {
@@ -167,12 +168,15 @@ export async function generateAsset(assetId: string, ctx?: JobCtx, o: { note?: s
       refs.push({ mime: 'image/png', data: await storage.get(a.meta.likeness_key), role: 'identity' });
     }
     const img = await generateImage({ prompt, aspect: aspectFor(a.kind, p.aspect), refs, label: [a.name, a.kind, a.key] });
+    // MiniMax image-01 only locks people: without a Gemini or OpenAI key a variant's room picture can't be passed on,
+    // so the new picture matches its parent by description only. Say so on the asset instead of hiding it.
+    const droppedPlace = refs.some((r) => r.role === 'place') && !placeRefsSupported(img.provider);
     const ext = img.mime === 'image/jpeg' ? 'jpg' : 'png';
     const key = `projects/${a.project_id}/assets/${a.id}/${Date.now()}.${ext}`;
     await storage.put(key, img.data, img.mime);
     const history = a.file_key ? [...(a.history || []), { file_key: a.file_key, at: new Date().toISOString(), note: o.note || null }].slice(-12) : a.history || [];
     await sql`update assets set status = 'review', file_key = ${key}, mime = ${img.mime}, prompt = ${prompt}, history = ${sql.json(history)},
-      meta = meta || ${sql.json({ provider: img.provider, ...(parent ? { parent_file: parent.file_key } : {}), ...(a.meta?.default_wardrobe ? { default_wardrobe: a.meta.default_wardrobe } : {}) })}, updated_at = now() where id = ${assetId}`;
+      meta = (meta - 'place_ref_missing' - 'stale_parent') || ${sql.json({ provider: img.provider, ...(parent ? { parent_file: parent.file_key } : {}), ...(a.meta?.default_wardrobe ? { default_wardrobe: a.meta.default_wardrobe } : {}), ...(droppedPlace ? { place_ref_missing: true } : {}) })}, updated_at = now() where id = ${assetId}`;
     await recordUsage({ ownerId: p.owner_id, projectId: p.id, kind: 'image', units: 1, cost: img.provider === 'mock' ? 0 : config.pricing.imageEach, ref: assetId });
     return { file_key: key };
   }
@@ -215,7 +219,7 @@ export async function queueAllAssets(projectId: string, o: { kinds?: string[]; c
 }
 
 export async function approveAsset(assetId: string, o: { covered?: boolean } = {}) {
-  const [a] = await sql`update assets set status = 'approved', approved_at = now(), updated_at = now()
+  const [a] = await sql`update assets set status = 'approved', approved_at = now(), updated_at = now(), meta = meta - 'stale_parent'
     where id = ${assetId} and file_key is not null returning *`;
   if (!a) throw new PermanentError('Nothing to approve yet: generate or upload the asset first.', 'bad_state');
   // Children generated from an older parent image are now out of date.
@@ -223,45 +227,43 @@ export async function approveAsset(assetId: string, o: { covered?: boolean } = {
     const stale = await sql`update assets set status = 'planned' where parent_id = ${a.id} and status in ('review','failed') and kind <> 'voice'
       and file_key is not null and (meta->>'parent_file') is distinct from ${a.file_key} returning id`;
     for (const s of stale) await enqueue('asset.generate', { assetId: s.id, covered: !!o.covered }, { projectId: a.project_id, dedupeKey: `asset:${s.id}` });
+    // An approved look or variant made from the old picture no longer matches it. Covered work (autopilot) redoes it for
+    // free; otherwise it goes back to review, marked out of date, so it isn't sent to the video model until the customer
+    // approves it again or pays to redo it.
+    const outdated = await sql`update assets set ${o.covered ? sql`status = 'planned'` : sql`status = 'review', meta = meta || ${sql.json({ stale_parent: true })}`}, updated_at = now()
+      where parent_id = ${a.id} and status = 'approved' and kind <> 'voice' and file_key is not null
+        and (meta->>'parent_file') is distinct from ${a.file_key} returning id`;
+    if (o.covered) for (const s of outdated) await enqueue('asset.generate', { assetId: s.id, covered: true }, { projectId: a.project_id, dedupeKey: `asset:${s.id}` });
   }
   return a;
 }
 
-/** An uploaded picture goes to the video model as a reference, so it's checked like any other customer content. */
-async function checkUpload(a: any, data: Buffer, uid: string) {
-  const dir = await mkdtemp(join(tmpdir(), 'upcheck-'));
-  try {
-    const raw = join(dir, 'in'), small = join(dir, 'small.jpg');
-    await writeFile(raw, data);
-    await ffmpeg(['-i', raw, '-vf', "scale='min(1024,iw)':'min(1024,ih)':force_original_aspect_ratio=decrease", '-frames:v', '1', '-q:v', '4', small])
-      .catch(() => { throw new PermanentError('The picture couldn’t be read. Use a JPEG, PNG or WebP.', 'bad_input'); });
-    const v = await moderate({ ownerId: uid, projectId: a.project_id, text: `Reference picture uploaded for a ${a.kind}: ${a.name}`, images: [{ mime: 'image/jpeg', data: await readFile(small) }] });
-    if (!v.allowed) throw refusal(v);
-  } finally { await rm(dir, { recursive: true, force: true }); }
-}
-
-/** Store a user-supplied file as the asset (an actor photo, a real location, a recorded voice). */
+/**
+ * Store a user-supplied file as the asset (an actor photo, a real location, a recorded voice). What is stored is
+ * never the bytes the customer sent: a picture is re-encoded to a JPEG and a voice to an MP3 (see clips.ts), which
+ * proves the file is what it claims to be and drops metadata such as GPS. A picture goes to the video model as a
+ * reference, so it is content-checked like any other customer content.
+ */
 export async function uploadAsset(assetId: string, data: Buffer, mime: string, uid: string, consent: boolean) {
   const [a] = await sql`select * from assets where id = ${assetId}`;
   if (!a) throw new PermanentError('asset not found');
   const isPerson = a.kind === 'character' || a.kind === 'look' || a.kind === 'voice';
   if (isPerson && !consent) throw new PermanentError('Uploading a real person\'s face or voice needs consent=true: confirm you have that person\'s permission.', 'consent_required');
-  const okImage = /^image\/(png|jpeg|webp)$/.test(mime), okAudio = /^audio\/(mpeg|mp3|wav|x-wav)$/.test(mime);
-  if (a.kind === 'voice' ? !okAudio : !okImage) throw new PermanentError(`Unsupported file type ${mime} for a ${a.kind}.`, 'bad_input');
   let key: string;
-  if (a.kind === 'voice') {
-    const dir = await mkdtemp(join(tmpdir(), 'upvoice-'));
-    try {
-      const raw = join(dir, 'in'), out = join(dir, 'ref.mp3');
-      await writeFile(raw, data); await trimAudio(raw, out, 14);
+  const dir = await mkdtemp(join(tmpdir(), 'upasset-'));
+  try {
+    if (a.kind === 'voice') {
+      const v = await withMediaSlot(() => prepAudio(data, dir, 14, 'The voice recording'));
       key = `projects/${a.project_id}/assets/${a.id}/upload-${Date.now()}.mp3`;
-      await storage.put(key, await readFile(out), 'audio/mpeg'); mime = 'audio/mpeg';
-    } finally { await rm(dir, { recursive: true, force: true }); }
-  } else {
-    await checkUpload(a, data, uid);
-    key = `projects/${a.project_id}/assets/${a.id}/upload-${Date.now()}.${mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : 'png'}`;
-    await storage.put(key, data, mime);
-  }
+      await storage.put(key, await readFile(v.file), 'audio/mpeg'); mime = 'audio/mpeg';
+    } else {
+      const im = await withMediaSlot(() => prepImage(data, dir, 'upload'));
+      const v = await moderate({ ownerId: uid, projectId: a.project_id, text: `Reference picture uploaded for a ${a.kind}: ${a.name}`, images: [{ mime: 'image/jpeg', data: im.small }] });
+      if (!v.allowed) throw refusal(v);
+      key = `projects/${a.project_id}/assets/${a.id}/upload-${Date.now()}.jpg`;
+      await storage.put(key, await readFile(im.file), 'image/jpeg'); mime = 'image/jpeg';
+    }
+  } finally { await rm(dir, { recursive: true, force: true }); }
   const history = a.file_key ? [...(a.history || []), { file_key: a.file_key, at: new Date().toISOString(), note: 'replaced by upload' }].slice(-12) : a.history || [];
   const meta = { ...(a.meta || {}), source: 'upload', ...(isPerson ? { consent: { confirmed: true, by: uid, at: new Date().toISOString() } } : {}) };
   const [row] = await sql`update assets set file_key = ${key}, mime = ${mime}, status = 'review', history = ${sql.json(history)}, meta = ${sql.json(meta)}, error = null, updated_at = now()

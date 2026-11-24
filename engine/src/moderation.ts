@@ -45,8 +45,38 @@ const hashOf = (text: string, images: { data: Buffer }[]) => {
   return h.digest('hex');
 };
 
-/** Whether this text (and pictures, JPEG or PNG) may be sent to a video model. */
+const CHUNK = 6000;
+/** A long text cut into pieces the check reads whole, at paragraph breaks where it can. */
+export function chunksOf(text: string, size = CHUNK): string[] {
+  const out: string[] = [];
+  let cur = '';
+  for (const para of text.split(/\n{2,}/)) {
+    for (let rest = para; rest.length;) {
+      if (cur.length + rest.length + 2 <= size) { cur += (cur ? '\n\n' : '') + rest; rest = ''; }
+      else if (cur) { out.push(cur); cur = ''; }
+      else { out.push(rest.slice(0, size)); rest = rest.slice(size); }
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+/**
+ * Whether this text (and pictures, JPEG or PNG) may be sent to a video model. A long text without pictures (a whole
+ * screenplay) is read in pieces, so nothing past the first page goes unchecked; the first refusal is the answer.
+ */
 export async function moderate(o: { ownerId: string; projectId?: string | null; text: string; images?: { mime: string; data: Buffer }[] }): Promise<Verdict> {
+  if (!(o.images || []).length && o.text.length > CHUNK && config.moderation && !config.mock) {
+    for (const part of chunksOf(o.text).slice(0, 16)) {
+      const v = await moderateOne({ ...o, text: part });
+      if (!v.allowed) return v;
+    }
+    return { allowed: true, category: 'none', reason: 'ok' };
+  }
+  return moderateOne(o);
+}
+
+async function moderateOne(o: { ownerId: string; projectId?: string | null; text: string; images?: { mime: string; data: Buffer }[] }): Promise<Verdict> {
   const images = o.images || [];
   if (!config.moderation) return { allowed: true, category: 'none', reason: 'checks are off' };
   if (config.mock) { // the e2e suites use FORCE_SENSITIVE to exercise refusals
@@ -78,4 +108,4 @@ export async function moderate(o: { ownerId: string; projectId?: string | null; 
 
 /** The error a customer sees when a request is refused (HTTP 422, code sensitive_content). */
 export const refusal = (v: Verdict) => Object.assign(
-  new PermanentError(`We can’t make this video: ${v.reason || 'it goes against our content rules.'}`, 'sensitive_content'), { status: 422 });
+  new PermanentError(`We can’t make this video: ${v.reason || 'it goes against our content rules.'}`, 'sensitive_content'), { status: 422, category: v.category });

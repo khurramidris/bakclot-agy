@@ -24,7 +24,7 @@ export function startFakeRunpod(port: number) {
     }
     if (state.holdMs) await new Promise((r) => setTimeout(r, state.holdMs));
     if (job.status !== 'IN_PROGRESS') return; // cancelled meanwhile
-    const [w, h] = req.ratio === '9:16' ? [432, 768] : [768, 432];
+    const [w, h] = req.ratio === '9:16' ? [768, 1344] : [1344, 768]; // the real worker's 768P canvas
     const dir = await mkdtemp(join(tmpdir(), 'fake-runpod-'));
     try {
       const file = join(dir, 'out.mp4');

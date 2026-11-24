@@ -2,7 +2,7 @@
 // wardrobe looks, props and voices need locked references. Code checks and repairs the
 // answer so every scene is covered and every appearance is counted.
 
-import { sql } from '../db.js';
+import { sql, begin } from '../db.js';
 import { PermanentError, type JobCtx } from '../queue.js';
 import { claudeJSON, llmCost, llmUnits } from '../providers/claude.js';
 import { config } from '../config.js';
@@ -78,7 +78,7 @@ export async function runBreakdown(projectId: string, ctx: JobCtx, o: { force?: 
 
   // 3) Write assets + scenes in one transaction.
   await ctx.progress('Saving the asset list');
-  const summary = await sql.begin(async (tx) => {
+  const summary = await begin(async (tx) => {
     const existing = await tx`select id, kind, key, status from assets where project_id = ${projectId}`;
     const byKey = new Map(existing.map((a: any) => [`${a.kind}:${a.key}`, a]));
     const seen = new Set<string>();

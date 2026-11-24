@@ -19,7 +19,7 @@ function headers() {
 }
 
 async function call(method: string, path: string, body?: unknown) {
-  const r = await fetch(`${base()}${path}`, { method, headers: headers(), body: body === undefined ? undefined : JSON.stringify(body) })
+  const r = await fetch(`${base()}${path}`, { method, headers: headers(), body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30_000) })
     .catch((e) => { throw new ProviderError(`RunPod network error: ${e.message}`, 'network', true); });
   if (!r.ok) {
     const text = (await r.text().catch(() => '')).slice(0, 300);
@@ -71,7 +71,7 @@ export const endpointHealth = () => call('GET', '/health');
 /** Set the endpoint's worker floor and ceiling (RunPod REST API). */
 export async function setWorkers(workersMin: number, workersMax: number) {
   const r = await fetch(`${config.runpod.restBase}/endpoints/${config.runpod.endpointId}`, {
-    method: 'PATCH', headers: headers(), body: JSON.stringify({ workersMin, workersMax }),
+    method: 'PATCH', headers: headers(), body: JSON.stringify({ workersMin, workersMax }), signal: AbortSignal.timeout(30_000),
   });
   if (!r.ok) throw new Error(`RunPod endpoint update failed: ${r.status} ${(await r.text().catch(() => '')).slice(0, 200)}`);
 }
