@@ -2,13 +2,24 @@
 .env
 .env.*
 !env.sample
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*credentials*.json
+*secret*.json
 
 node_modules/
 dist/
+build/
+!desktop/build/
+coverage/
 .output/
 .tanstack/
 .wrangler/
 data/
+logs/
 *.log
 *.stackdump
 __pycache__/
